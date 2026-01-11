@@ -21,11 +21,10 @@ import { useSettings } from '@/contexts/SettingsContext';
 interface DailyReportDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  email?: string | null;
 }
 
-
-
-const DailyReportDialog: React.FC<DailyReportDialogProps> = ({ open, onOpenChange }) => {
+const DailyReportDialog: React.FC<DailyReportDialogProps> = ({ open, onOpenChange, email }) => {
   const { clinicInfo, formatCurrency } = useSettings();
   const [selectedDate, setSelectedDate] = React.useState(() => format(new Date(), 'yyyy-MM-dd'));
 
@@ -41,7 +40,7 @@ const DailyReportDialog: React.FC<DailyReportDialogProps> = ({ open, onOpenChang
     const fetchReport = async () => {
       setLoading(true);
       try {
-        const data = await window.api.getDailyReport(selectedDate);
+        const data = await window.api.getDailyReport(selectedDate, email);
         setReportData(data);
       } catch (e) {
         console.error("Failed to load daily report", e);
@@ -53,7 +52,7 @@ const DailyReportDialog: React.FC<DailyReportDialogProps> = ({ open, onOpenChang
     if (open) {
       fetchReport();
     }
-  }, [open, selectedDate]);
+  }, [open, selectedDate, email]);
 
   const generateWhatsAppMessage = () => {
     const lines = [

@@ -27,24 +27,37 @@
 
 ### 3. 💰 Financial System (النظام المالي)
 *   **Invoicing & Payments**: Create invoices, track partial payments, and manage debts.
-*   **Expense Tracking**: Monitor clinic expenses and operational costs.
-*   **Profit Calculation**: Auto-calculate net profit based on revenue vs. expenses.
-*   **فواتير ومدفوعات**: إنشاء فواتير، متابعة الدفعات الجزئية، وإدارة الديون.
-*   **حساب الأرباح**: حساب تلقائي للأرباح الصافية بناءً على الإيرادات والمصروفات.
 
-### 4. ☁️ Secure Backup (النسخ الاحتياطي)
+*   **Doctor Commissions**: Automated calculation (Percentage or Fixed) per doctor.
+*   **Expense Tracking**: Monitor clinic expenses and operational costs.
+*   **Profit Calculation**: Auto-calculate net profit based on revenue vs. expenses (including lab costs).
+*   **فواتير ومدفوعات**: إنشاء فواتير، متابعة الدفعات الجزئية، وإدارة الديون.
+*   **عمولات الأطباء**: حساب آلي للعمولات (نسبة أو مبلغ ثابت) لكل طبيب.
+*   **حساب الأرباح**: حساب تلقائي للأرباح الصافية بناءً على الإيرادات، المصروفات، وتكاليف المعمل.
+
+### 4. 🦷 Lab Management (إدارة المعامل)
+*   **Lab Orders**: Track prosthetics and appliance orders sent to labs.
+*   **Status Tracking**: Monitor order workflow (Sent → Received).
+*   **Financials**: Record lab expenses and manage payments to labs.
+*   **طلبات المعمل**: متابعة التركيبات والطلبات المرسلة للمعامل.
+*   **تتبع الحالة**: مراقبة حالة الطلب (مرسل → مستلم).
+*   **الماليات**: تسجيل تكاليف المعمل وإدارة الدفعات المستحقة.
+
+### 5. ☁️ Secure Backup (النسخ الاحتياطي)
 *   **Hybrid Strategy**: Supports both **Local** and **Cloud (Google Drive)** backups.
 *   **Encryption**: Optional AES-256 encryption for backups.
 *   **Single-File Restore**: Simplified recovery process with integrity checks.
 *   **نظام هجين**: يدعم النسخ المحلي والسحابي (Google Drive).
 *   **التشفير**: خيار تشفير النسخ الاحتياطية لضمان الخصوصية.
 
-### 5. 🔐 Security & Access Control (الأمان والتحكم)
+### 6. 🔐 Security & Access Control (الأمان والتحكم)
 *   **PIN Login**: Fast, secure access for daily use.
-*   **Role-Based Access**: Granular permissions (Admin, Doctor, Assistant).
+*   **User Management**: Admin can manage users, roles, and reset PINs.
+*   **Change PIN**: Users can securely change their own PINs.
 *   **Anti-Tampering**: Detects clock manipulation to prevent fraud.
 *   **دخول برمز PIN**: وصول سريع وآمن.
-*   **حماية التلاعب**: كشف محاولات تغيير الوقت لمنع الاحتيال.
+*   **إدارة المستخدمين**: يمكن للمدير إدارة الموظفين وإعادة تعيين كلمات المرور.
+*   **تغيير الرمز**: يمكن للمستخدمين تغيير الرمز السري الخاص بهم بأمان.
 
 ---
 
@@ -109,6 +122,7 @@ Dental Flow employs a robust **Device-Locked Offline Licensing** system designed
     npm run build
     ```
     *Output will be in the `release` folder.*
+
 
 ---
 

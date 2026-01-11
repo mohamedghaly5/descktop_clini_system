@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useSettings } from '@/contexts/SettingsContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 import {
   getAppointments,
@@ -12,6 +13,7 @@ import {
 } from '@/services/appointmentService';
 import { getActivePatients, Patient } from '@/services/patientService';
 import DashboardKPICards from '@/components/dashboard/DashboardKPICards';
+import { useExpenses } from '@/hooks/useExpenses';
 import TodayAppointmentsTable from '@/components/dashboard/TodayAppointmentsTable';
 import DashboardAlerts from '@/components/dashboard/DashboardAlerts';
 import DashboardQuickActions from '@/components/dashboard/DashboardQuickActions';
@@ -21,11 +23,13 @@ import { BookAppointmentDialog } from '@/components/appointments/BookAppointment
 const Dashboard: React.FC = () => {
   const { t, isRTL, language } = useLanguage();
   const { clinicInfo } = useSettings();
+  const { user } = useAuth();
 
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [treatmentCases, setTreatmentCases] = useState<TreatmentCase[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
+  const { expenses, refresh: refreshExpenses } = useExpenses();
 
   const [patientsMap, setPatientsMap] = useState<Map<string, Patient | null>>(new Map());
   const [treatmentCasesMap, setTreatmentCasesMap] = useState<Map<string, TreatmentCase[]>>(new Map());
@@ -35,6 +39,7 @@ const Dashboard: React.FC = () => {
   const [bookDialogOpen, setBookDialogOpen] = useState(false);
 
   const loadData = async () => {
+    if (!user?.email) return;
     try {
       // Execute in parallel
       const [
@@ -43,16 +48,21 @@ const Dashboard: React.FC = () => {
         loadedTreatmentCases,
         loadedPatients
       ] = await Promise.all([
-        getAppointments(),
-        getInvoices(),
-        getTreatmentCases(),
-        getActivePatients()
+        getAppointments(user.email),
+        getInvoices(user.email),
+        getTreatmentCases(user.email),
+        getActivePatients(user.email)
       ]);
 
       setAppointments(loadedAppointments);
       setInvoices(loadedInvoices);
       setTreatmentCases(loadedTreatmentCases);
       setPatients(loadedPatients);
+
+      // Refresh expenses to ensure sync
+      refreshExpenses();
+
+      // ...
 
       // Build patients map
       const pMap = new Map<string, Patient | null>();
@@ -146,7 +156,7 @@ const Dashboard: React.FC = () => {
       {/* Header */}
       <div className="flex flex-col gap-1 text-start">
         <h1 className="text-2xl font-bold text-foreground">
-          {t('welcomeBack')}, {clinicInfo.ownerName || (language === 'ar' ? 'دكتور' : 'Doctor')}
+          {t('welcomeBack')}, {language === 'ar' ? 'دكتور' : 'Doctor'}{clinicInfo.ownerName ? ` ${clinicInfo.ownerName}` : ''}
         </h1>
         <p className="text-muted-foreground">
           {clinicInfo.name} - {new Date().toLocaleDateString(language === 'ar' ? 'ar-EG' : 'en-US', {
@@ -164,6 +174,7 @@ const Dashboard: React.FC = () => {
         todayAppointments={todayAppointments}
         todayInvoices={todayInvoices}
         allInvoices={invoices}
+        expenses={expenses}
       />
 
       {/* Today's Appointments - Full Width */}

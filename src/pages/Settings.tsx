@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Globe, Building2, DollarSign, MapPin, Briefcase, Plus, Trash2, Edit2, Stethoscope, UserCheck, UserX, Percent, Database } from 'lucide-react';
+import { Globe, Building2, DollarSign, MapPin, Briefcase, Plus, Trash2, Edit2, Stethoscope, UserCheck, UserX, Percent, Upload, Key, FlaskConical, KeyRound } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,21 +19,41 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
+import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { useSettings, CURRENCY_OPTIONS, Service, City, Doctor } from '@/contexts/SettingsContext';
-import { toast } from 'sonner';
+import { useSettings } from '@/contexts/SettingsContext';
 import { cn } from '@/lib/utils';
-import DataManagement from '@/components/DataManagement';
+import { toast } from 'sonner';
+
+import { UpdateCard } from '@/components/features/settings/update-card';
+import LicenseSettings from './LicenseSettings';
+import BackupSettings from '@/components/BackupSettings';
+import LabServicesSettings from '@/components/settings/LabServicesSettings';
+import ChangePinDialog from '@/components/auth/ChangePinDialog';
+
+// Local Interfaces
+interface Service { id: string; name: string; defaultPrice: number; }
+interface City { id: string; name: string; }
+interface Doctor { id: string; name: string; role: string; active: boolean; commissionType?: 'percentage' | 'fixed'; commissionValue?: number; }
+
+const CURRENCY_OPTIONS = [
+  { code: 'EGP', symbol: 'EGP', displayName: 'Egyptian Pound' },
+  { code: 'USD', symbol: '$', displayName: 'US Dollar' },
+  { code: 'SAR', symbol: 'SAR', displayName: 'Saudi Riyal' },
+  { code: 'AED', symbol: 'AED', displayName: 'UAE Dirham' },
+];
 
 const SettingsPage: React.FC = () => {
   const { t, isRTL, language, setLanguage } = useLanguage();
-  const {
-    services, addService, updateService, deleteService,
-    cities, addCity, updateCity, deleteCity,
-    doctors, addDoctor, updateDoctor, toggleDoctorActive,
-    currency, setCurrency,
-    clinicInfo, updateClinicInfo
-  } = useSettings();
+  const { user } = useAuth();
+
+  // NOTE: Context Removed. Logic is now local.
+  // We manage 'currency' and 'clinicInfo' via local state + IPC
+  const [currency, setCurrency] = useState('EGP');
+  const [clinicInfo, setClinicInfo] = useState<any>({
+    name: '', ownerName: '', phone: '', email: '', whatsappNumber: '',
+    address: '', logo: '', currency: 'EGP'
+  });
 
   // Dialog states
   const [serviceDialogOpen, setServiceDialogOpen] = useState(false);
@@ -72,20 +92,51 @@ const SettingsPage: React.FC = () => {
       return;
     }
     let success = false;
-    if (editingService) {
-      success = await updateService(editingService.id, serviceForm);
-      if (success) toast.success(language === 'ar' ? 'تم تحديث الخدمة' : 'Service updated');
-    } else {
-      success = await addService(serviceForm);
-      if (success) toast.success(language === 'ar' ? 'تم إضافة الخدمة' : 'Service added');
+    try {
+      if (editingService) {
+        // Update
+        const res = await window.electron.ipcRenderer.invoke('db:update', {
+          table: 'services',
+          id: editingService.id,
+          data: {
+            name: serviceForm.name,
+            default_price: parseFloat(serviceForm.defaultPrice.toString()) || 0
+          }
+        });
+        success = !res.error;
+      } else {
+        // Create
+        const res = await window.electron.ipcRenderer.invoke('db:insert', {
+          table: 'services',
+          data: {
+            name: serviceForm.name,
+            default_price: parseFloat(serviceForm.defaultPrice.toString()) || 0
+          }
+        });
+        success = !res.error;
+      }
+    } catch (e) {
+      console.error(e);
+      success = false;
     }
-    if (success) setServiceDialogOpen(false);
-    else toast.error(language === 'ar' ? 'فشل حفظ الخدمة' : 'Failed to save service');
+
+    if (success) {
+      toast.success(language === 'ar' ? 'تم الحفظ بنجاح' : 'Saved successfully');
+      setServiceDialogOpen(false);
+      fetchLocalLists();
+    } else {
+      toast.error(language === 'ar' ? 'فشل الحفظ' : 'Failed to save');
+    }
   };
 
   const handleDeleteService = async (id: string) => {
-    await deleteService(id);
-    toast.success(language === 'ar' ? 'تم حذف الخدمة' : 'Service deleted');
+    try {
+      await window.electron.ipcRenderer.invoke('db:delete', { table: 'services', id });
+      toast.success(language === 'ar' ? 'تم حذف الخدمة' : 'Service deleted');
+      fetchLocalLists();
+    } catch (e) {
+      toast.error('Error deleting');
+    }
   };
 
   // Handlers for Cities
@@ -107,20 +158,38 @@ const SettingsPage: React.FC = () => {
       return;
     }
     let success = false;
-    if (editingCity) {
-      success = await updateCity(editingCity.id, cityForm);
-      if (success) toast.success(language === 'ar' ? 'تم تحديث المدينة' : 'City updated');
+    try {
+      if (editingCity) {
+        const res = await window.electron.ipcRenderer.invoke('db:update', {
+          table: 'cities',
+          id: editingCity.id,
+          data: { name: cityForm.name }
+        });
+        success = !res.error;
+      } else {
+        const res = await window.electron.ipcRenderer.invoke('db:insert', {
+          table: 'cities',
+          data: { name: cityForm.name }
+        });
+        success = !res.error;
+      }
+    } catch (e) { success = false; }
+
+    if (success) {
+      toast.success(language === 'ar' ? 'تم الحفظ' : 'Saved');
+      setCityDialogOpen(false);
+      fetchLocalLists();
     } else {
-      success = await addCity(cityForm);
-      if (success) toast.success(language === 'ar' ? 'تم إضافة المدينة' : 'City added');
+      toast.error(language === 'ar' ? 'فشل الحفظ' : 'Failed to save');
     }
-    if (success) setCityDialogOpen(false);
-    else toast.error(language === 'ar' ? 'فشل حفظ المدينة' : 'Failed to save city');
   };
 
   const handleDeleteCity = async (id: string) => {
-    await deleteCity(id);
-    toast.success(language === 'ar' ? 'تم حذف المدينة' : 'City deleted');
+    try {
+      await window.electron.ipcRenderer.invoke('db:delete', { table: 'cities', id });
+      toast.success(language === 'ar' ? 'تم الحذف' : 'Deleted');
+      fetchLocalLists();
+    } catch (e) { }
   };
 
   // Handlers for Doctors
@@ -134,12 +203,110 @@ const SettingsPage: React.FC = () => {
     setEditingDoctor(doctor);
     setDoctorForm({
       name: doctor.name,
-      role: doctor.role,
-      commissionType: doctor.commissionType || 'percentage',
+      role: (doctor.role as any),
+      commissionType: (doctor.commissionType as any) || 'percentage',
       commissionValue: doctor.commissionValue || 0
     });
     setDoctorDialogOpen(true);
   };
+
+  // Clinic Info Local State (for smooth typing)
+  const [localClinicInfo, setLocalClinicInfo] = useState(clinicInfo);
+  const [isSaving, setIsSaving] = useState(false);
+  const [localStaff, setLocalStaff] = useState<Doctor[]>([]); // New local state for staff
+  const [localServices, setLocalServices] = useState<Service[]>([]); // Local state for services
+  const [localCities, setLocalCities] = useState<City[]>([]); // Local state for cities
+
+  const [isReadOnly, setIsReadOnly] = useState(false);
+
+  const checkSystemStatus = async () => {
+    try {
+      // @ts-ignore
+      const status = await window.api.getSystemStatus();
+      setIsReadOnly(!!status?.isReadOnly);
+    } catch (e) {
+      console.error("Failed to check system status", e);
+    }
+  };
+
+  const fetchStaff = async () => {
+    try {
+      // Direct IPC call, robust against missing email
+      // @ts-ignore
+      const result = await window.electron.ipcRenderer.invoke('staff:get-all');
+      if (Array.isArray(result)) {
+        setLocalStaff(result.map((d: any) => ({
+          id: d.id,
+          name: d.name,
+          role: d.role,
+          active: Boolean(d.active),
+          commissionType: d.commission_type,
+          commissionValue: d.commission_value
+        })));
+      }
+    } catch (e) {
+      console.error("Failed to fetch staff:", e);
+    }
+  };
+
+  const fetchLocalLists = async () => {
+    try {
+      // Fetch Services
+      // @ts-ignore
+      const sResult = await window.electron.ipcRenderer.invoke('services:getAll');
+      if (Array.isArray(sResult)) {
+        setLocalServices(sResult.map((s: any) => ({ id: s.id, name: s.name, defaultPrice: s.default_price })));
+      }
+
+      // Fetch Cities
+      // @ts-ignore
+      const cResult = await window.electron.ipcRenderer.invoke('cities:getAll');
+      if (Array.isArray(cResult)) {
+        setLocalCities(cResult.map((c: any) => ({ id: c.id, name: c.name })));
+      }
+    } catch (e) {
+      console.error("Failed to fetch local lists:", e);
+    }
+  };
+
+  // Initial Fetch
+  React.useEffect(() => {
+    checkSystemStatus();
+    fetchStaff();
+    fetchLocalLists();
+  }, []);
+
+  // Sync local state when context data arrives
+  React.useEffect(() => {
+    setLocalClinicInfo(clinicInfo);
+  }, [clinicInfo]);
+
+  // FIX: Load from Local DB on mount to ensure data exists even if Context is slow/blocked
+  React.useEffect(() => {
+    const loadLocalData = async () => {
+      try {
+        const response = await window.electron.ipcRenderer.invoke('settings:getClinicInfo');
+        if (response && response.data) {
+          const dbData = response.data;
+          setLocalClinicInfo(prev => ({
+            ...prev,
+            // Map DB snake_case to CamelCase
+            name: dbData.clinic_name || prev.name || '',
+            ownerName: dbData.owner_name || prev.ownerName || '',
+            address: dbData.address || prev.address || '',
+            phone: dbData.phone || prev.phone || '',
+            whatsappNumber: dbData.whatsapp_number || prev.whatsappNumber || '',
+            logo: dbData.clinic_logo || prev.logo || '',
+            // Keep email from Auth (prev.email) if available, else DB
+            email: prev.email || dbData.email || ''
+          }));
+        }
+      } catch (error) {
+        console.error("Failed to load local clinic info:", error);
+      }
+    };
+    loadLocalData();
+  }, []);
 
   const handleSaveDoctor = async () => {
     if (!doctorForm.name.trim()) {
@@ -147,23 +314,88 @@ const SettingsPage: React.FC = () => {
       return;
     }
     let success = false;
-    if (editingDoctor) {
-      success = await updateDoctor(editingDoctor.id, doctorForm);
-      if (success) toast.success(language === 'ar' ? 'تم تحديث الطبيب' : 'Doctor updated');
+    const docData: any = {
+      name: doctorForm.name,
+      role: doctorForm.role || 'doctor',
+      commission_type: doctorForm.commissionType || 'percentage',
+      commission_value: isNaN(Number(doctorForm.commissionValue)) ? 0 : Number(doctorForm.commissionValue),
+      active: 1 // Send as integer 1 for SQLite
+    };
+
+    try {
+      if (editingDoctor) {
+        const res = await window.electron.ipcRenderer.invoke('db:update', {
+          table: 'doctors',
+          id: editingDoctor.id,
+          data: docData
+        });
+        success = !res.error;
+      } else {
+        const res = await window.electron.ipcRenderer.invoke('db:insert', {
+          table: 'doctors',
+          data: docData
+        });
+        success = !res.error;
+      }
+    } catch (e) { console.error(e); }
+
+    if (success) {
+      setDoctorDialogOpen(false);
+      fetchStaff();
+      toast.success(language === 'ar' ? 'تم الحفظ' : 'Saved');
     } else {
-      success = await addDoctor({ ...doctorForm, active: true });
-      if (success) toast.success(language === 'ar' ? 'تم إضافة الطبيب' : 'Doctor added');
+      toast.error('Error saving');
     }
-    if (success) setDoctorDialogOpen(false);
-    else toast.error(language === 'ar' ? 'فشل حفظ الطبيب' : 'Failed to save doctor');
   };
 
   const handleToggleDoctorActive = async (id: string, currentActive: boolean) => {
-    await toggleDoctorActive(id);
-    toast.success(language === 'ar'
-      ? (currentActive ? 'تم إلغاء تفعيل الطبيب' : 'تم تفعيل الطبيب')
-      : (currentActive ? 'Doctor deactivated' : 'Doctor activated')
-    );
+    try {
+      await window.electron.ipcRenderer.invoke('db:update', {
+        table: 'doctors',
+        id,
+        data: { active: !currentActive }
+      });
+      fetchStaff();
+      toast.success(language === 'ar' ? 'تم التحديث' : 'Updated');
+    } catch (e) { console.error(e); }
+  };
+
+  const handleDeleteDoctor = async (id: string) => {
+    if (!confirm(language === 'ar' ? 'هل أنت متأكد من حذف هذا الطبيب؟' : 'Are you sure you want to delete this doctor?')) return;
+    try {
+      // Soft Delete: Set is_deleted = 1
+      await window.electron.ipcRenderer.invoke('db:update', {
+        table: 'doctors',
+        id,
+        data: { is_deleted: 1 }
+      });
+      fetchStaff();
+      toast.success(language === 'ar' ? 'تم الحذف بنجاح' : 'Deleted successfully');
+    } catch (e) {
+      console.error(e);
+      toast.error(language === 'ar' ? 'حدث خطأ أثناء الحذف' : 'Error deleting');
+    }
+  };
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 2 * 1024 * 1024) { // 2MB
+        toast.error(language === 'ar' ? 'حجم الصورة يجب أن لا يتعدى 2 ميجابايت' : 'Image size must be less than 2MB');
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64String = reader.result as string;
+        // CORRECT FIX: Update local form state (localClinicInfo), NOT the synced state (setClinicInfo)
+        // Updating `setClinicInfo` triggers a `useEffect` that overwrites `localClinicInfo` with old data, causing the reset.
+        setLocalClinicInfo((prev: any) => ({ ...prev, logo: base64String }));
+
+        toast.info(language === 'ar' ? 'اضغط حفظ التعديلات لتأكيد الشعار' : 'Click Save Changes to confirm logo');
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const getRoleLabel = (role: string) => {
@@ -172,6 +404,33 @@ const SettingsPage: React.FC = () => {
       case 'assistant': return language === 'ar' ? 'مساعد' : 'Assistant';
       case 'hygienist': return language === 'ar' ? 'أخصائي تنظيف' : 'Hygienist';
       default: return role;
+    }
+  };
+
+  // Generic handler for local updates
+  const handleClinicInfoChange = (field: keyof typeof localClinicInfo, value: string) => {
+    setLocalClinicInfo(prev => ({ ...prev, [field]: value }));
+  };
+
+  // Use Context for GLOBAL updates (Sidebar etc)
+  const { updateClinicInfo } = useSettings();
+
+  const handleSaveChanges = async () => {
+    setIsSaving(true);
+    try {
+      // 1. Update Global Context & Persist to DB via Context
+      // This ensures Sidebar and other components update immediately
+      await updateClinicInfo(localClinicInfo);
+
+      // 2. Refresh local data to be sure (optional, but good for consistency)
+      setClinicInfo({ ...localClinicInfo });
+
+      toast.success(language === 'ar' ? 'تم تحديث بيانات العيادة بنجاح' : 'Clinic info updated successfully');
+    } catch (error) {
+      console.error(error);
+      toast.error(language === 'ar' ? 'حدث خطأ أثناء الحفظ' : 'Error saving changes');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -185,38 +444,53 @@ const SettingsPage: React.FC = () => {
         </p>
       </div>
 
-      <Tabs defaultValue="general" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-5 lg:w-auto lg:inline-flex justify-end">
-          <TabsTrigger value="general" className="flex items-center gap-2">
+      <Tabs defaultValue="general" className="space-y-6" dir={language === 'ar' ? 'rtl' : 'ltr'}>
+        <TabsList className="flex flex-wrap h-auto w-full justify-start gap-2 bg-muted/50 p-2 lg:w-fit">
+          <TabsTrigger value="general" className="flex-1 lg:flex-none flex items-center gap-2 px-4">
             <Globe className="w-4 h-4" />
             <span className="hidden sm:inline">{language === 'ar' ? 'عام' : 'General'}</span>
           </TabsTrigger>
-          <TabsTrigger value="clinic" className="flex items-center gap-2">
+          <TabsTrigger value="clinic" className="flex-1 lg:flex-none flex items-center gap-2 px-4">
             <Building2 className="w-4 h-4" />
             <span className="hidden sm:inline">{language === 'ar' ? 'العيادة' : 'Clinic'}</span>
           </TabsTrigger>
-          <TabsTrigger value="doctors" className="flex items-center gap-2">
+          <TabsTrigger value="doctors" className="flex-1 lg:flex-none flex items-center gap-2 px-4">
             <Stethoscope className="w-4 h-4" />
             <span className="hidden sm:inline">{language === 'ar' ? 'الأطباء' : 'Doctors'}</span>
           </TabsTrigger>
-          <TabsTrigger value="services" className="flex items-center gap-2">
+          <TabsTrigger value="services" className="flex-1 lg:flex-none flex items-center gap-2 px-4">
             <Briefcase className="w-4 h-4" />
             <span className="hidden sm:inline">{language === 'ar' ? 'الخدمات' : 'Services'}</span>
           </TabsTrigger>
-
-
-          <TabsTrigger value="lists" className="flex items-center gap-2">
+          <TabsTrigger value="lab-services" className="flex-1 lg:flex-none flex items-center gap-2 px-4">
+            <FlaskConical className="w-4 h-4" />
+            <span className="hidden sm:inline">{language === 'ar' ? 'خدمات المعمل' : 'Lab Services'}</span>
+          </TabsTrigger>
+          <TabsTrigger value="lists" className="flex-1 lg:flex-none flex items-center gap-2 px-4">
             <MapPin className="w-4 h-4" />
             <span className="hidden sm:inline">{language === 'ar' ? 'القوائم' : 'Lists'}</span>
           </TabsTrigger>
-          <TabsTrigger value="database" className="flex items-center gap-2">
-            <Database className="w-4 h-4" />
-            <span className="hidden sm:inline">{language === 'ar' ? 'البيانات والنسخ الاحتياطي' : 'Data & Backup'}</span>
+
+          <TabsTrigger value="license" className="flex-1 lg:flex-none flex items-center gap-2 px-4">
+            <Key className="w-4 h-4" />
+            <span className="hidden sm:inline">{language === 'ar' ? 'الرخصة' : 'License'}</span>
+          </TabsTrigger>
+          <TabsTrigger value="backup" className="flex-1 lg:flex-none flex items-center gap-2 px-4">
+            <Upload className="w-4 h-4" />
+            <span className="hidden sm:inline">{language === 'ar' ? 'النسخ الاحتياطي' : 'Backup'}</span>
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="database" className="space-y-6">
-          <DataManagement />
+
+
+        {/* License Tab */}
+        <TabsContent value="license" className="space-y-6">
+          <LicenseSettings />
+        </TabsContent>
+
+        {/* Backup Tab */}
+        <TabsContent value="backup" className="space-y-6">
+          <BackupSettings />
         </TabsContent>
 
         {/* General Tab */}
@@ -258,6 +532,32 @@ const SettingsPage: React.FC = () => {
             </CardContent>
           </Card>
 
+          {/* Security Card (Change PIN) */}
+          <Card variant="elevated" className="animate-fade-in border-destructive/20" dir={language === 'ar' ? 'rtl' : 'ltr'}>
+            <CardHeader>
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-destructive/10 flex items-center justify-center">
+                  <KeyRound className="w-6 h-6 text-destructive" />
+                </div>
+                <div className="text-start">
+                  <CardTitle>{language === 'ar' ? 'الأمان' : 'Security'}</CardTitle>
+                  <CardDescription>
+                    {language === 'ar' ? 'قم بتغيير الرقم السري الخاص بك' : 'Change your PIN code'}
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <ChangePinDialog
+                trigger={
+                  <Button variant="outline" className="w-full sm:w-auto">
+                    {language === 'ar' ? 'تغيير الرقم السري' : 'Change PIN'}
+                  </Button>
+                }
+              />
+            </CardContent>
+          </Card>
+
           {/* Currency Selection */}
           <Card variant="elevated" className="animate-fade-in" dir={language === 'ar' ? 'rtl' : 'ltr'}>
             <CardHeader>
@@ -289,6 +589,8 @@ const SettingsPage: React.FC = () => {
             </CardContent>
           </Card>
 
+          {/* Software Update */}
+          <UpdateCard language={language} />
 
         </TabsContent>
 
@@ -313,32 +615,32 @@ const SettingsPage: React.FC = () => {
                 <div className="space-y-2">
                   <Label>{language === 'ar' ? 'اسم العيادة' : 'Clinic Name'}</Label>
                   <Input
-                    value={clinicInfo.name}
-                    onChange={(e) => updateClinicInfo({ name: e.target.value })}
+                    value={localClinicInfo.name || ''}
+                    onChange={(e) => handleClinicInfoChange('name', e.target.value)}
                     placeholder={language === 'ar' ? 'اسم العيادة' : 'Clinic Name'}
                   />
                 </div>
                 <div className="space-y-2">
                   <Label>{language === 'ar' ? 'اسم صاحب العيادة / الطبيب' : 'Owner / Doctor Name'}</Label>
                   <Input
-                    value={clinicInfo.ownerName || ''}
-                    onChange={(e) => updateClinicInfo({ ownerName: e.target.value })}
+                    value={localClinicInfo.ownerName || ''}
+                    onChange={(e) => handleClinicInfoChange('ownerName', e.target.value)}
                     placeholder={language === 'ar' ? 'د. أحمد' : 'Dr. Ahmed'}
                   />
                 </div>
                 <div className="space-y-2">
                   <Label>{language === 'ar' ? 'العنوان' : 'Address'}</Label>
                   <Input
-                    value={clinicInfo.address}
-                    onChange={(e) => updateClinicInfo({ address: e.target.value })}
+                    value={localClinicInfo.address || ''}
+                    onChange={(e) => handleClinicInfoChange('address', e.target.value)}
                     placeholder={language === 'ar' ? 'عنوان العيادة' : 'Clinic Address'}
                   />
                 </div>
                 <div className="space-y-2">
                   <Label>{language === 'ar' ? 'رقم الهاتف' : 'Phone Number'}</Label>
                   <Input
-                    value={clinicInfo.phone}
-                    onChange={(e) => updateClinicInfo({ phone: e.target.value })}
+                    value={localClinicInfo.phone || ''}
+                    onChange={(e) => handleClinicInfoChange('phone', e.target.value)}
                     placeholder="+20 123 456 7890"
                     dir="ltr"
                   />
@@ -346,8 +648,8 @@ const SettingsPage: React.FC = () => {
                 <div className="space-y-2">
                   <Label>{language === 'ar' ? 'رقم الواتساب' : 'WhatsApp Number'}</Label>
                   <Input
-                    value={clinicInfo.whatsappNumber || ''}
-                    onChange={(e) => updateClinicInfo({ whatsappNumber: e.target.value })}
+                    value={localClinicInfo.whatsappNumber || ''}
+                    onChange={(e) => handleClinicInfoChange('whatsappNumber', e.target.value)}
                     placeholder="+201234567890"
                     dir="ltr"
                   />
@@ -358,34 +660,100 @@ const SettingsPage: React.FC = () => {
                 <div className="space-y-2">
                   <Label>{language === 'ar' ? 'البريد الإلكتروني' : 'Email'}</Label>
                   <Input
-                    value={clinicInfo.email}
-                    onChange={(e) => updateClinicInfo({ email: e.target.value })}
+                    value={user?.email || ''}
+                    disabled
+                    readOnly
+                    className="bg-muted/50 cursor-not-allowed"
                     placeholder="info@clinic.com"
                     dir="ltr"
                   />
+                  <p className="text-[10px] text-muted-foreground">
+                    {language === 'ar'
+                      ? 'البريد الإلكتروني مرتبط بحسابك ولا يمكن تغييره من هنا'
+                      : 'Email is linked to your account and cannot be changed here'}
+                  </p>
                 </div>
               </div>
               <div className="space-y-2">
-                <Label>{language === 'ar' ? 'شعار العيادة (رابط الصورة)' : 'Clinic Logo (Image URL)'}</Label>
-                <Input
-                  value={clinicInfo.logo}
-                  onChange={(e) => updateClinicInfo({ logo: e.target.value })}
-                  placeholder="https://example.com/logo.png"
-                  dir="ltr"
-                />
-                {clinicInfo.logo && (
-                  <div className="mt-2 p-4 border rounded-lg bg-secondary/30">
-                    <img src={clinicInfo.logo} alt="Clinic Logo" className="max-h-20 object-contain" />
+                <Label>{language === 'ar' ? 'شعار العيادة' : 'Clinic Logo'}</Label>
+                <div className="flex items-start gap-4 border rounded-lg p-4 bg-secondary/10">
+                  <div className="flex-1 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => document.getElementById('logo-upload')?.click()}
+                        className="gap-2"
+                      >
+                        <Upload className="w-4 h-4" />
+                        {language === 'ar' ? 'اختر الشعار' : 'Choose Logo'}
+                      </Button>
+                      <Input
+                        id="logo-upload"
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={handleLogoUpload}
+                      />
+                      {localClinicInfo.logo && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive hover:text-destructive/90 hover:bg-destructive/10"
+                          onClick={() => setLocalClinicInfo((prev: any) => ({ ...prev, logo: '' }))}
+                        >
+                          {language === 'ar' ? 'حذف' : 'Remove'}
+                        </Button>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      {language === 'ar'
+                        ? 'يفضل أن تكون الصورة مربعة (500x500) وبحجم لا يزيد عن 2 ميجابايت'
+                        : 'Recommended: Square 500x500px, Max 2MB'}
+                    </p>
                   </div>
-                )}
+
+                  {localClinicInfo.logo ? (
+                    <div className="w-20 h-20 border rounded-lg bg-background flex items-center justify-center p-1 shadow-sm overflow-hidden relative group">
+                      <img src={localClinicInfo.logo} alt="Clinic Logo" className="w-full h-full object-contain" />
+                    </div>
+                  ) : (
+                    <div className="w-20 h-20 border-2 border-dashed rounded-lg flex items-center justify-center text-muted-foreground bg-muted/50">
+                      <Building2 className="w-8 h-8 opacity-50" />
+                    </div>
+                  )}
+                </div>
               </div>
+
+              {/* Save Button */}
+              <div className="flex justify-end pt-4 border-t">
+                <Button onClick={handleSaveChanges} disabled={isSaving} className="min-w-[120px]">
+                  {isSaving
+                    ? (language === 'ar' ? 'جاري الحفظ...' : 'Saving...')
+                    : (language === 'ar' ? 'حفظ التعديلات' : 'Save Changes')
+                  }
+                </Button>
+              </div>
+
             </CardContent>
           </Card>
         </TabsContent>
 
         {/* Doctors Tab */}
         <TabsContent value="doctors" className="space-y-6">
-          <Card variant="elevated" className="animate-fade-in">
+          {isReadOnly && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-800 p-4 rounded-lg flex items-center gap-2" dir={language === 'ar' ? 'rtl' : 'ltr'}>
+              <div className="w-5 h-5 flex items-center justify-center rounded-full bg-amber-200 text-amber-700 shrink-0">!</div>
+              <p className="text-sm font-medium">
+                {language === 'ar'
+                  ? 'إدارة فريق العمل غير متاحة في وضع القراءة فقط (تجديد الترخيص مطلوب)'
+                  : 'Staff management is disabled in Read-Only mode (License renewal required)'}
+              </p>
+            </div>
+          )}
+          {/* Note: We disable interactions properly but keep visibility */}
+          <Card variant="elevated" className={cn("animate-fade-in")}>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -399,15 +767,17 @@ const SettingsPage: React.FC = () => {
                     </CardDescription>
                   </div>
                 </div>
-                <Button onClick={handleAddDoctor} className="flex items-center gap-2">
-                  <Plus className="w-4 h-4" />
-                  {language === 'ar' ? 'إضافة' : 'Add'}
-                </Button>
+                {!isReadOnly && (
+                  <Button onClick={handleAddDoctor} className="flex items-center gap-2">
+                    <Plus className="w-4 h-4" />
+                    {language === 'ar' ? 'إضافة' : 'Add'}
+                  </Button>
+                )}
               </div>
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
-                {doctors.map(doctor => (
+                {localStaff.map(doctor => (
                   <div
                     key={doctor.id}
                     className={cn(
@@ -446,27 +816,25 @@ const SettingsPage: React.FC = () => {
                       </div>
                     </div>
                     <div className="flex gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleToggleDoctorActive(doctor.id, doctor.active)}
-                        title={doctor.active
-                          ? (language === 'ar' ? 'إلغاء التفعيل' : 'Deactivate')
-                          : (language === 'ar' ? 'تفعيل' : 'Activate')
-                        }
-                      >
-                        {doctor.active
-                          ? <UserX className="w-4 h-4 text-warning" />
-                          : <UserCheck className="w-4 h-4 text-success" />
-                        }
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleEditDoctor(doctor)}>
-                        <Edit2 className="w-4 h-4" />
-                      </Button>
+                      {!isReadOnly && (
+                        <>
+                          <Button variant="ghost" size="icon" onClick={() => handleEditDoctor(doctor)}>
+                            <Edit2 className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleDeleteDoctor(doctor.id)}
+                            className="text-destructive hover:text-destructive/90 hover:bg-destructive/10"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </>
+                      )}
                     </div>
                   </div>
                 ))}
-                {doctors.length === 0 && (
+                {localStaff.length === 0 && (
                   <p className="text-center text-muted-foreground py-4">
                     {language === 'ar' ? 'لا يوجد أطباء مسجلين' : 'No doctors registered'}
                   </p>
@@ -500,7 +868,7 @@ const SettingsPage: React.FC = () => {
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
-                {services.map(service => (
+                {localServices.map(service => (
                   <div
                     key={service.id}
                     className="flex items-center gap-4 p-3 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors"
@@ -524,6 +892,11 @@ const SettingsPage: React.FC = () => {
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* Lab Services Tab */}
+        <TabsContent value="lab-services" className="space-y-6">
+          <LabServicesSettings />
         </TabsContent>
 
         {/* Lists Tab (Cities) */}
@@ -550,7 +923,7 @@ const SettingsPage: React.FC = () => {
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                {cities.map(city => (
+                {localCities.map(city => (
                   <div
                     key={city.id}
                     className="flex items-center gap-3 p-3 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors"
@@ -579,7 +952,7 @@ const SettingsPage: React.FC = () => {
       <Card variant="ghost" className="border border-border">
         <CardContent className="py-6 text-center">
           <p className="text-sm text-muted-foreground">
-            {language === 'ar' ? 'دينتا كير - نظام إدارة عيادات الأسنان' : 'DentaCare - Dental Clinic Management System'}
+            {language === 'ar' ? 'دينتال فلو - نظام إدارة عيادات الأسنان' : 'Dental Flow - Dental Clinic Management System'}
           </p>
           <p className="text-xs text-muted-foreground mt-1">
             {language === 'ar' ? 'الإصدار 1.0.0' : 'Version 1.0.0'}

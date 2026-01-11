@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { UserPlus, CalendarPlus, FileText } from 'lucide-react';
+import { UserPlus, CalendarPlus, FileText, Plus } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -16,23 +16,29 @@ const DashboardQuickActions: React.FC<DashboardQuickActionsProps> = ({
   const navigate = useNavigate();
 
   const actions = [
-    { 
-      icon: CalendarPlus, 
-      label: language === 'ar' ? 'موعد جديد' : 'New Appointment', 
+    {
+      icon: CalendarPlus,
+      label: language === 'ar' ? 'موعد جديد' : 'New Appointment',
       variant: 'gradient' as const,
       onClick: onNewAppointment
     },
-    { 
-      icon: UserPlus, 
-      label: language === 'ar' ? 'مريض جديد' : 'New Patient', 
+    {
+      icon: UserPlus,
+      label: language === 'ar' ? 'مريض جديد' : 'New Patient',
       variant: 'gradientAccent' as const,
       onClick: () => navigate('/patients/new')
     },
-    { 
-      icon: FileText, 
-      label: language === 'ar' ? 'تقرير اليوم' : 'Daily Report', 
+    {
+      icon: FileText,
+      label: language === 'ar' ? 'تقرير اليوم' : 'Daily Report',
       variant: 'secondary' as const,
       onClick: () => navigate('/reports')
+    },
+    {
+      icon: Plus,
+      label: language === 'ar' ? 'إضافة مصروف' : 'Add Expense',
+      variant: 'secondary' as const,
+      onClick: () => navigate('/expenses?action=add')
     },
   ];
 

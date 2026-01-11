@@ -40,7 +40,7 @@ const PatientsPage: React.FC = () => {
   const navigate = useNavigate();
   const { t, isRTL, language } = useLanguage();
   const { cities } = useSettings();
-  const { clinicId } = useAuth();
+  const { user } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [patients, setPatients] = useState<Patient[]>([]);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -52,10 +52,11 @@ const PatientsPage: React.FC = () => {
   const [newPatient, setNewPatient] = useState({
     name: '',
     phone: '',
-    age: '',
+    birthDate: '',
     gender: 'male' as 'male' | 'female',
     cityId: '',
     notes: '',
+    medical_history: '',
   });
 
   const loadPatients = async () => {
@@ -64,22 +65,8 @@ const PatientsPage: React.FC = () => {
 
     setIsLoading(true);
     try {
-      const data = await getPatients();
-      // Transform service Patient to Page Patient interface if needed?
-      // Service returns: id, name, phone, gender, age, cityId, notes...
-      // Page expects: id, full_name, phone, age, gender, city_id...
-      // Let's map it.
-      const mapped: any[] = data.map(p => ({
-        id: p.id,
-        full_name: p.name,
-        phone: p.phone,
-        age: p.age,
-        gender: p.gender,
-        city_id: p.cityId,
-        notes: p.notes,
-        clinic_id: 'default'
-      }));
-      setPatients(mapped);
+      const data = await getPatients(user?.email);
+      setPatients(data);
     } catch (error) {
       console.error('Error loading patients:', error);
       toast({
@@ -93,11 +80,11 @@ const PatientsPage: React.FC = () => {
 
   useEffect(() => {
     loadPatients();
-  }, [clinicId]);
+  }, [user]);
 
   // Helper to get patient name
   const getPatientName = (patient: Patient) => {
-    return patient.full_name || 'Unknown';
+    return patient.name || 'Unknown';
   };
 
   const filteredPatients = patients.filter(patient => {
@@ -124,10 +111,11 @@ const PatientsPage: React.FC = () => {
     setNewPatient({
       name: '',
       phone: '',
-      age: '',
+      birthDate: '',
       gender: 'male',
       cityId: '',
       notes: '',
+      medical_history: '',
     });
   };
 
@@ -150,11 +138,12 @@ const PatientsPage: React.FC = () => {
       const result = await createPatientService({
         name: newPatient.name.trim(),
         phone: newPatient.phone.replace(/[\s\-]/g, ''),
-        age: newPatient.age ? parseInt(newPatient.age) : undefined,
+        birthDate: newPatient.birthDate || undefined,
         gender: newPatient.gender as any,
         cityId: newPatient.cityId || undefined,
         notes: newPatient.notes,
-        clinicId: clinicId || undefined
+        medicalHistory: newPatient.medical_history,
+        ownerEmail: user?.email
       });
 
       setIsSubmitting(false);
@@ -330,14 +319,20 @@ const PatientsPage: React.FC = () => {
               </Select>
             </div>
 
-            {/* Age */}
+            {/* Birth Date */}
             <div className="space-y-2">
-              <Label className="text-right block">العمر</Label>
+              <Label className="text-right block">
+                تاريخ الميلاد
+                {newPatient.birthDate && (
+                  <span className="text-xs text-muted-foreground mr-2">
+                    ({Math.floor((new Date().getTime() - new Date(newPatient.birthDate).getTime()) / (365.25 * 24 * 60 * 60 * 1000))} سنة)
+                  </span>
+                )}
+              </Label>
               <Input
-                type="number"
-                value={newPatient.age}
-                onChange={(e) => setNewPatient(prev => ({ ...prev, age: e.target.value }))}
-                placeholder="أدخل العمر"
+                type="date"
+                value={newPatient.birthDate}
+                onChange={(e) => setNewPatient(prev => ({ ...prev, birthDate: e.target.value }))}
                 className="text-right"
                 dir="rtl"
               />
@@ -346,24 +341,26 @@ const PatientsPage: React.FC = () => {
             {/* City */}
             <div className="space-y-2">
               <Label className="text-right block">المدينة</Label>
-              {cities.length === 0 ? (
-                <p className="text-muted-foreground text-sm text-right">لا توجد مدن (اختياري)</p>
-              ) : (
-                <Select
-                  value={newPatient.cityId}
-                  onValueChange={(value) => setNewPatient(prev => ({ ...prev, cityId: value }))}
-                >
-                  <SelectTrigger className="text-right" dir="rtl">
-                    <SelectValue placeholder="اختر المدينة (اختياري)" />
-                  </SelectTrigger>
-                  <SelectContent dir="rtl">
-                    {cities.map(city => (
-                      <SelectItem key={city.id} value={city.id}>
-                        {city.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              <Select
+                value={newPatient.cityId}
+                onValueChange={(value) => setNewPatient(prev => ({ ...prev, cityId: value }))}
+                disabled={cities.length === 0}
+              >
+                <SelectTrigger className="text-right" dir="rtl">
+                  <SelectValue placeholder={cities.length === 0 ? "لا يوجد مدن مسجلة" : "اختر المدينة (اختياري)"} />
+                </SelectTrigger>
+                <SelectContent dir="rtl">
+                  {cities.map(city => (
+                    <SelectItem key={city.id} value={city.id}>
+                      {city.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {cities.length === 0 && (
+                <p className="text-xs text-muted-foreground text-right mt-1">
+                  يمكنك إضافة المدن من صفحة الإعدادات
+                </p>
               )}
             </div>
 
@@ -374,6 +371,18 @@ const PatientsPage: React.FC = () => {
                 value={newPatient.notes}
                 onChange={(e) => setNewPatient(prev => ({ ...prev, notes: e.target.value }))}
                 placeholder="ملاحظات طبية أو عامة..."
+                className="text-right"
+                dir="rtl"
+              />
+            </div>
+
+            {/* Medical History (NEW) */}
+            <div className="space-y-2">
+              <Label className="text-right block">التاريخ الطبي</Label>
+              <Textarea
+                value={newPatient.medical_history}
+                onChange={(e) => setNewPatient(prev => ({ ...prev, medical_history: e.target.value }))}
+                placeholder="حساسية، أمراض مزمنة، عمليات سابقة..."
                 className="text-right"
                 dir="rtl"
               />

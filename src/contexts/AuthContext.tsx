@@ -1,271 +1,194 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { User, Session } from '@supabase/supabase-js';
-import { supabase } from '@/integrations/supabase/client';
-import type { Database } from '@/integrations/supabase/types';
 
-type AppRole = Database['public']['Enums']['app_role'];
-
-interface UserRoleInfo {
-  role: AppRole;
+// Simplified Local User Interface
+export interface User {
+  id: string;
+  name: string;
+  role: 'admin' | 'doctor' | 'staff'; // Typed roles
   clinic_id: string;
+  email?: string;
+}
+
+interface AuthResult {
+  success: boolean;
+  error?: string;
+  code?: string;
 }
 
 interface AuthContextType {
   user: User | null;
-  session: Session | null;
-  role: AppRole | null;
-  clinicId: string | null;
+  clinicId?: string;
   loading: boolean;
-  signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
-  signUp: (email: string, password: string, fullName: string, clinicName: string) => Promise<{ error: Error | null }>;
-  signOut: () => Promise<void>;
-  resetPassword: (email: string) => Promise<{ error: Error | null }>;
-  updatePassword: (newPassword: string) => Promise<{ error: Error | null }>;
+  isClockTampered: boolean;
+
+  mustChangePin: boolean;
+  hasAdmin: boolean | null;
+  // Updated login signature to accept rememberMe
+  login: (userId: string, pin: string, remember?: boolean) => Promise<AuthResult>;
+  logout: () => Promise<void>;
+  checkAuth: () => Promise<void>;
+  changePin: (oldPin: string, newPin: string) => Promise<{ success: boolean; error?: string }>;
+  checkAdminExists: () => Promise<boolean>;
+  createInitialAdmin: (data: { name: string; pin: string }) => Promise<{ success: boolean; error?: string }>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-interface AuthProviderProps {
-  children: ReactNode;
-}
-
-// Arabic error messages mapping
-const getArabicError = (error: string): string => {
-  const errorMap: Record<string, string> = {
-    'Invalid login credentials': 'بيانات الدخول غير صحيحة',
-    'Email not confirmed': 'البريد الإلكتروني غير مؤكد',
-    'User already registered': 'المستخدم مسجل بالفعل',
-    'Password should be at least 6 characters': 'كلمة المرور يجب أن تكون 6 أحرف على الأقل',
-    'Email rate limit exceeded': 'تم تجاوز الحد المسموح للبريد الإلكتروني',
-    'For security purposes, you can only request this once every 60 seconds': 'لأسباب أمنية، يمكنك طلب هذا مرة واحدة كل 60 ثانية',
-    'New password should be different from the old password': 'كلمة المرور الجديدة يجب أن تكون مختلفة عن القديمة',
-    'Access denied': 'الوصول مرفوض - لا توجد صلاحيات',
-  };
-  
-  // Check for partial matches
-  for (const [key, value] of Object.entries(errorMap)) {
-    if (error.toLowerCase().includes(key.toLowerCase())) {
-      return value;
-    }
-  }
-  
-  return error;
-};
-
-export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
+export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
-  const [role, setRole] = useState<AppRole | null>(null);
-  const [clinicId, setClinicId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isClockTampered, setIsClockTampered] = useState(false);
 
-  // Fetch user role and clinic_id
-  const fetchUserRoleInfo = async (userId: string): Promise<UserRoleInfo | null> => {
+  const [mustChangePin, setMustChangePin] = useState(false);
+  const [hasAdmin, setHasAdmin] = useState<boolean | null>(null);
+
+  // Initial Auth Check
+  const checkAuth = async () => {
+    // We delegate all persistence/startup logic to the Backend
+    setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('user_roles')
-        .select('role, clinic_id')
-        .eq('user_id', userId)
-        .maybeSingle();
-      
-      if (error) {
-        console.error('Error fetching role:', error);
-        return null;
+      let authResult = null;
+      const MAX_RETRIES = 5;
+
+      for (let i = 0; i < MAX_RETRIES; i++) {
+        // @ts-ignore
+        const adminExists = await window.api.checkAdminExists();
+        setHasAdmin(adminExists);
+
+        // @ts-ignore
+        authResult = await window.api.checkAuthStatus();
+
+        if (authResult && authResult.code === 'DB_NOT_OPEN') {
+          await new Promise(r => setTimeout(r, 500));
+          continue;
+        }
+        break;
       }
-      
-      if (data) {
-        return {
-          role: data.role,
-          clinic_id: data.clinic_id
-        };
+
+      if (authResult) {
+        if (authResult.code === 'CLOCK_TAMPERED') {
+          setIsClockTampered(true);
+          setUser(null);
+        } else if (authResult.authenticated && authResult.user) {
+          setUser(authResult.user);
+          setIsClockTampered(false);
+          setMustChangePin(!!authResult.mustChangePin);
+        } else {
+          setUser(null);
+          setMustChangePin(false);
+        }
       }
-      return null;
-    } catch (err) {
-      console.error('Error in fetchUserRoleInfo:', err);
-      return null;
+    } catch (e) {
+      console.error('Auth Check Critical Failure', e);
+      setUser(null);
+    } finally {
+      setLoading(false);
     }
   };
 
   useEffect(() => {
-    // Set up auth state listener FIRST
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, currentSession) => {
-        setSession(currentSession);
-        setUser(currentSession?.user ?? null);
-        
-        // Defer role fetching with setTimeout to prevent deadlock
-        if (currentSession?.user) {
-          setTimeout(() => {
-            fetchUserRoleInfo(currentSession.user.id).then(info => {
-              if (info) {
-                setRole(info.role);
-                setClinicId(info.clinic_id);
-              } else {
-                setRole(null);
-                setClinicId(null);
-              }
-            });
-          }, 0);
-        } else {
-          setRole(null);
-          setClinicId(null);
-        }
-        
-        setLoading(false);
-      }
-    );
-
-    // THEN check for existing session
-    supabase.auth.getSession().then(({ data: { session: existingSession } }) => {
-      setSession(existingSession);
-      setUser(existingSession?.user ?? null);
-      
-      if (existingSession?.user) {
-        fetchUserRoleInfo(existingSession.user.id).then(info => {
-          if (info) {
-            setRole(info.role);
-            setClinicId(info.clinic_id);
-          }
-        });
-      }
-      
-      setLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
+    checkAuth();
   }, []);
 
-  const signIn = async (email: string, password: string): Promise<{ error: Error | null }> => {
+  const login = async (userId: string, pin: string, remember: boolean = false): Promise<AuthResult> => {
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      });
+      setLoading(true);
+      // @ts-ignore
+      // Pass 'remember' flag to backend for persistent storage
+      const result = await window.api.login(userId, pin, remember);
 
-      if (error) {
-        return { error: new Error(getArabicError(error.message)) };
+      if (result.code === 'CLOCK_TAMPERED') {
+        setIsClockTampered(true);
+        setLoading(false);
+        return { success: false, error: 'System time manipulation detected.' };
       }
 
-      // Check if user has a role
-      if (data.user) {
-        const userRoleInfo = await fetchUserRoleInfo(data.user.id);
-        if (!userRoleInfo) {
-          await supabase.auth.signOut();
-          return { error: new Error('الوصول مرفوض - لا توجد صلاحيات لهذا الحساب') };
-        }
-        setRole(userRoleInfo.role);
-        setClinicId(userRoleInfo.clinic_id);
+      if (result.success && result.user) {
+        setUser(result.user);
+        setIsClockTampered(false);
+        // We do NOT need to call checkAuth again, just set state
+        return { success: true };
+      } else {
+        return { success: false, error: result.error || 'Login failed' };
       }
-
-      return { error: null };
-    } catch (err) {
-      return { error: err as Error };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Unknown error' };
+    } finally {
+      setLoading(false);
     }
   };
 
-  const signUp = async (email: string, password: string, fullName: string, clinicName: string): Promise<{ error: Error | null }> => {
+  const changePin = async (oldPin: string, newPin: string) => {
     try {
-      const redirectUrl = `${window.location.origin}/`;
-      
-      // First, create the auth user
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: email.trim(),
-        password,
-        options: {
-          emailRedirectTo: redirectUrl,
-          data: {
-            full_name: fullName,
-          },
-        },
-      });
-
-      if (authError) {
-        return { error: new Error(getArabicError(authError.message)) };
+      // @ts-ignore
+      const res = await window.api.changePin(oldPin, newPin);
+      if (res.success) {
+        setMustChangePin(false);
       }
-
-      // If user was created successfully, create clinic and assign role
-      if (authData.user) {
-        const { error: clinicError } = await supabase.rpc('create_clinic_with_owner', {
-          _user_id: authData.user.id,
-          _clinic_name: clinicName,
-          _owner_name: fullName
-        });
-
-        if (clinicError) {
-          console.error('Error creating clinic:', clinicError);
-          // Don't fail signup if clinic creation fails, user can set up later
-        }
-      }
-
-      return { error: null };
-    } catch (err) {
-      return { error: err as Error };
+      return res;
+    } catch (e: any) {
+      return { success: false, error: e.message };
     }
   };
 
-  const signOut = async () => {
-    await supabase.auth.signOut();
-    setUser(null);
-    setSession(null);
-    setRole(null);
-    setClinicId(null);
+  const checkAdminExists = async () => {
+    // @ts-ignore
+    const exists = await window.api.checkAdminExists();
+    setHasAdmin(exists);
+    return exists;
   };
 
-  const resetPassword = async (email: string): Promise<{ error: Error | null }> => {
+  const createInitialAdmin = async (data: { name: string; pin: string }) => {
+    // @ts-ignore
+    const res = await window.api.createInitialAdmin(data);
+    if (res.success) {
+      await checkAuth();
+    }
+    return res;
+  };
+
+  const logout = async () => {
     try {
-      const redirectUrl = `${window.location.origin}/update-password`;
-      
-      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-        redirectTo: redirectUrl,
-      });
-
-      if (error) {
-        return { error: new Error(getArabicError(error.message)) };
-      }
-
-      return { error: null };
-    } catch (err) {
-      return { error: err as Error };
+      // @ts-ignore
+      await window.api.logout();
+      setUser(null);
+      setMustChangePin(false);
+    } catch (e) {
+      console.error('Logout failed', e);
     }
   };
 
-  const updatePassword = async (newPassword: string): Promise<{ error: Error | null }> => {
-    try {
-      const { error } = await supabase.auth.updateUser({
-        password: newPassword,
-      });
-
-      if (error) {
-        return { error: new Error(getArabicError(error.message)) };
-      }
-
-      return { error: null };
-    } catch (err) {
-      return { error: err as Error };
-    }
-  };
+  if (isClockTampered) {
+    return (
+      <div className="h-screen w-screen flex flex-col items-center justify-center bg-red-50 p-4 text-center">
+        <h1 className="text-2xl font-bold text-red-600 mb-2">Security Alert</h1>
+        <p className="text-gray-700">System time manipulation detected. Please correct your system clock and restart the application.</p>
+      </div>
+    );
+  }
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        session,
-        role,
-        clinicId,
-        loading,
-        signIn,
-        signUp,
-        signOut,
-        resetPassword,
-        updatePassword,
-      }}
-    >
+    <AuthContext.Provider value={{
+      clinicId: user?.clinic_id,
+      user,
+      loading,
+      isClockTampered,
+
+      mustChangePin,
+      hasAdmin,
+      login, // Exposes updated signature
+      logout,
+      checkAuth,
+      changePin,
+      checkAdminExists,
+      createInitialAdmin
+    }}>
       {children}
     </AuthContext.Provider>
   );
 };
 
-export const useAuth = (): AuthContextType => {
+export const useAuth = () => {
   const context = useContext(AuthContext);
   if (context === undefined) {
     throw new Error('useAuth must be used within an AuthProvider');

@@ -11,6 +11,17 @@ export function getDb() {
   return db;
 }
 
+export function closeConnection() {
+  try {
+    if (db.open) {
+      db.close();
+      console.log('Database connection closed.');
+    }
+  } catch (err) {
+    console.error('Error closing database:', err);
+  }
+}
+
 export function initializeDatabase() {
   // Enable foreign keys
   db.pragma('foreign_keys = ON');
@@ -28,6 +39,7 @@ export function initializeDatabase() {
       address TEXT,
       phone TEXT,
       email TEXT,
+      is_setup_completed INTEGER DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -197,6 +209,11 @@ export function initializeDatabase() {
       date TEXT NOT NULL DEFAULT CURRENT_DATE,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS app_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
   `;
 
   db.exec(schema);
@@ -324,5 +341,67 @@ export function initializeDatabase() {
     updateTransaction(invoicesWithoutId);
     console.log(`Backfilled ${invoicesWithoutId.length} invoices with display_id`);
   }
-}
 
+  // 4. Setup Status (Migration)
+  const settingsCols = db.prepare('PRAGMA table_info(clinic_settings)').all() as any[];
+  if (!settingsCols.some(c => c.name === 'is_setup_completed')) {
+    try {
+      db.prepare('ALTER TABLE clinic_settings ADD COLUMN is_setup_completed INTEGER DEFAULT 0').run();
+      console.log('Added is_setup_completed to clinic_settings');
+    } catch (e) {
+      console.error('Failed to add is_setup_completed to clinic_settings', e);
+    }
+  }
+
+  // 6. Email (Migration) - Critical for backup security
+  if (!settingsCols.some(c => c.name === 'email')) {
+    try {
+      db.prepare('ALTER TABLE clinic_settings ADD COLUMN email TEXT').run();
+      console.log('Added email to clinic_settings');
+    } catch (e) {
+      console.error('Failed to add email to clinic_settings', e);
+    }
+  }
+
+  // 5. Create Staff Table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS staff (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'assistant',
+      phone TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  // 7. Multi-Tenancy (Clinic ID) - Critical for data isolation
+  // Note: owner_email is deprecated and removed in V2. clinic_id is now the key.
+  // The migration to clinic_id is handled by 001_clinics_migration.ts
+  /* 
+  const tablesToMigrate = [
+    'patients',
+    'appointments',
+    'invoices',
+    'doctors',
+    'services',
+    'treatment_cases',
+    'accounts',
+    'cities'
+  ];
+
+  tablesToMigrate.forEach(table => {
+    try {
+      const colInfo = db.prepare(`PRAGMA table_info(${table})`).all() as any[];
+      if (!colInfo.some(c => c.name === 'clinic_id')) {
+        // We rely on 001_clinics_migration.ts to add this, but we can double check or just skip.
+        // db.prepare(`ALTER TABLE ${table} ADD COLUMN clinic_id TEXT`).run();
+      }
+    } catch (e) {
+      console.error(`Failed to migrate ${table} for clinic_id`, e);
+    }
+  });
+  */
+
+  // 8. Accounts table check (Ensure it exists in code - added above in CREATE TABLE but just safe check)
+
+}

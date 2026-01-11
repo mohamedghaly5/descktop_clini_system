@@ -49,7 +49,7 @@ const ImportPatientsDialog: React.FC<ImportPatientsDialogProps> = ({
   onImportComplete,
 }) => {
   const { language } = useLanguage();
-  const { clinicId } = useAuth();
+  const { clinicId, user } = useAuth();
   const [step, setStep] = useState<ImportStep>('upload');
   const [parsedData, setParsedData] = useState<ParsedPatient[]>([]);
   const [importResult, setImportResult] = useState({ success: 0, failed: 0 });
@@ -211,7 +211,8 @@ const ImportPatientsDialog: React.FC<ImportPatientsDialogProps> = ({
       const buffer = await fileToImport.arrayBuffer();
 
       // Send to Main Process
-      const result = await window.api.importPatients(buffer);
+      // @ts-ignore
+      const result = await window.api.importPatients(buffer, user?.email);
       console.log('Import result:', result);
 
       if (result) {

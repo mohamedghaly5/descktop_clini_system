@@ -1,12 +1,8 @@
 {
     "compilerOptions": {
-        "target": "ESNext",
-        "module": "commonjs",
-        "lib": [
-            "ESNext"
-        ],
-        "allowSyntheticDefaultImports": true,
-        "esModuleInterop": true,
+        "target": "ES2022",
+        "module": "NodeNext",
+        "moduleResolution": "NodeNext",
         "outDir": "../dist-electron",
         "rootDir": ".",
         "strict": true,
@@ -14,5 +10,8 @@
     },
     "include": [
         "."
+    ],
+    "exclude": [
+        "preload.ts"
     ]
 }

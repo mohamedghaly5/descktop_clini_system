@@ -11,11 +11,11 @@ const WorkingHoursSection: React.FC = () => {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 justify-start flex-row-reverse">
-          <span>ساعات العمل</span>
+        <CardTitle className="flex items-center gap-2">
           <Clock className="w-5 h-5 text-primary" />
+          <span>ساعات العمل</span>
         </CardTitle>
-        <CardDescription className="text-end">
+        <CardDescription className="text-right">
           حدد ساعات عمل العيادة لحساب التكلفة الشهرية
         </CardDescription>
       </CardHeader>
@@ -54,11 +54,12 @@ const WorkingHoursSection: React.FC = () => {
         </div>
 
         <div className="bg-muted/50 rounded-lg p-4 border border-border">
-          <div className="flex items-center justify-between flex-row-reverse">
-            <span className="text-sm text-muted-foreground">ساعات العمل الشهرية</span>
-            <span className="text-lg font-bold text-primary">
-              {clinicCostSettings.monthlyWorkingHours.toFixed(0)} {'ساعة'}
-            </span>
+          <div className="flex items-center justify-start gap-4">
+            <span className="text-sm text-muted-foreground">ساعات العمل الشهرية:</span>
+            <div className="flex items-center gap-1 font-bold text-lg text-primary">
+              <span>{clinicCostSettings.monthlyWorkingHours.toFixed(0)}</span>
+              <span className="text-sm font-normal">ساعة</span>
+            </div>
           </div>
           <p className="text-xs text-muted-foreground mt-1 text-right">
             = {clinicCostSettings.workingHoursPerDay} ساعة × {clinicCostSettings.workingDaysPerWeek} يوم × 4 أسابيع

@@ -8,7 +8,7 @@ interface ProtectedRouteProps {
 }
 
 const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
-  const { session, loading, role } = useAuth();
+  const { user, loading, mustChangePin } = useAuth();
   const location = useLocation();
 
   if (loading) {
@@ -16,29 +16,32 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="text-center space-y-4">
           <Loader2 className="w-12 h-12 animate-spin text-primary mx-auto" />
-          <p className="text-muted-foreground">جاري التحميل...</p>
+          <p className="text-muted-foreground">Loading system...</p>
         </div>
       </div>
     );
   }
 
-  if (!session) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
+  // 1. Auth Check (Priority #1)
+  if (!user) {
+    return <Navigate to="/select-user" state={{ from: location }} replace />;
   }
 
-  if (!role) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="text-center space-y-4 p-8">
-          <div className="w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center mx-auto">
-            <span className="text-3xl">🚫</span>
-          </div>
-          <h2 className="text-xl font-bold text-foreground">الوصول مرفوض</h2>
-          <p className="text-muted-foreground">ليس لديك صلاحيات للوصول إلى هذا النظام</p>
-        </div>
-      </div>
-    );
+  // 2. FORCE PIN CHANGE
+  if (mustChangePin) {
+    if (location.pathname !== '/change-pin') {
+      return <Navigate to="/change-pin" replace />;
+    }
+    // If on /change-pin, allow rendering
+    return <>{children}</>;
+  } else {
+    // If user tries to access change-pin but doesn't need to
+    if (location.pathname === '/change-pin') {
+      return <Navigate to="/" replace />;
+    }
   }
+
+
 
   return <>{children}</>;
 };

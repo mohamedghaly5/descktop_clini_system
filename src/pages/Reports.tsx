@@ -4,6 +4,7 @@ import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 import DoctorReports from '@/components/reports/DoctorReports';
 import DailyReportDialog from '@/components/reports/DailyReportDialog';
@@ -11,6 +12,7 @@ import { toast } from 'sonner';
 
 const ReportsPage: React.FC = () => {
   const { t, language } = useLanguage();
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState('overview');
   const [dailyReportOpen, setDailyReportOpen] = useState(false);
 
@@ -156,12 +158,16 @@ const ReportsPage: React.FC = () => {
         </TabsContent>
 
         <TabsContent value="doctors">
-          <DoctorReports />
+          <DoctorReports email={user?.email} />
         </TabsContent>
       </Tabs>
 
       {/* Daily Report Dialog */}
-      <DailyReportDialog open={dailyReportOpen} onOpenChange={setDailyReportOpen} />
+      <DailyReportDialog
+        open={dailyReportOpen}
+        onOpenChange={setDailyReportOpen}
+        email={user?.email}
+      />
     </div>
   );
 };

@@ -1,16 +1,19 @@
 import React from 'react';
-import { NavLink } from 'react-router-dom';
-import { 
-  LayoutDashboard, 
-  Users, 
-  Calendar, 
-  Receipt, 
-  BarChart3, 
+import { NavLink, useNavigate } from 'react-router-dom';
+import {
+  LayoutDashboard,
+  Users,
+  Calendar,
+  Receipt,
+  BarChart3,
   Settings,
   Stethoscope,
   ChevronRight,
   Calculator,
-  LogOut
+  LogOut,
+  FlaskConical,
+  Landmark,
+  KeyRound
 } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useSettings } from '@/contexts/SettingsContext';
@@ -27,25 +30,32 @@ interface SidebarProps {
 const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
   const { t, language } = useLanguage();
   const { clinicInfo } = useSettings();
-  const { signOut, user } = useAuth();
+  const { logout, user } = useAuth();
+  const navigate = useNavigate();
 
   const navItems = [
     { path: '/', icon: LayoutDashboard, label: t('dashboard') },
     { path: '/patients', icon: Users, label: t('patients') },
     { path: '/appointments', icon: Calendar, label: t('appointments') },
-    { path: '/accounts', icon: Receipt, label: t('accounts') },
+    { path: '/expenses', icon: Receipt, label: t('expenses.label') },
+    { path: '/accounts', icon: Landmark, label: t('accounts') },
     { path: '/reports', icon: BarChart3, label: t('reports') },
     { path: '/pricing', icon: Calculator, label: t('pricing') },
     { path: '/settings', icon: Settings, label: t('settings') },
   ];
 
   const handleSignOut = async () => {
-    await signOut();
-    toast.success(t('logout'));
+    try {
+      await logout();
+      toast.success(t('logout'));
+      navigate('/login', { replace: true });
+    } catch (error) {
+      console.error("Logout failed:", error);
+    }
   };
 
   return (
-    <aside 
+    <aside
       className={cn(
         "fixed top-0 h-screen bg-sidebar text-sidebar-foreground z-40 transition-all duration-300 flex flex-col",
         "inset-inline-start-0 border-e border-sidebar-border",
@@ -58,9 +68,9 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
         collapsed ? "justify-center" : "gap-3"
       )}>
         {clinicInfo.logo ? (
-          <img 
-            src={clinicInfo.logo} 
-            alt={clinicInfo.name} 
+          <img
+            src={clinicInfo.logo}
+            alt={clinicInfo.name}
             className="w-10 h-10 rounded-xl object-contain flex-shrink-0"
           />
         ) : (
@@ -70,7 +80,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
         )}
         {!collapsed && (
           <span className="font-bold text-lg text-sidebar-foreground animate-fade-in truncate">
-            {clinicInfo.name || t('appName')}
+            {clinicInfo.name || 'عيادتي'}
           </span>
         )}
       </div>
@@ -85,8 +95,8 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
               cn(
                 "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group",
                 collapsed && "justify-center px-2",
-                isActive 
-                  ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-md" 
+                isActive
+                  ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-md"
                   : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground"
               )
             }
@@ -110,7 +120,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
             {user.email}
           </div>
         )}
-        
+
         {/* Logout Button */}
         <Button
           variant="ghost"

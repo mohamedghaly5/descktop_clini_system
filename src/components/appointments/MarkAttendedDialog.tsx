@@ -19,7 +19,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { useSettings } from '@/contexts/SettingsContext';
+// import { useSettings } from '@/contexts/SettingsContext'; // Removing reliance on SettingsContext due to user report
+import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 import {
   Appointment,
@@ -28,12 +29,30 @@ import {
   markAppointmentAttended,
 } from '@/services/appointmentService';
 import { toast } from '@/hooks/use-toast';
+import { db } from '@/services/db';
 
 interface MarkAttendedDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   appointment: Appointment | null;
   onSuccess: () => void;
+}
+
+// Local interfaces used in fetching
+interface Service {
+  id: string;
+  name: string;
+  default_price: number;
+  // Map backend's underscore to standard if needed, or stick to snake_case if used in component
+  // Typically services table has default_price.
+  // SettingsContext might have mapped it to defaultPrice.
+  // I will assume backend returns default_price and map it or use it directly.
+  defaultPrice?: number; // Mapped
+}
+
+interface Doctor {
+  id: string;
+  name: string;
 }
 
 export const MarkAttendedDialog: React.FC<MarkAttendedDialogProps> = ({
@@ -43,9 +62,45 @@ export const MarkAttendedDialog: React.FC<MarkAttendedDialogProps> = ({
   onSuccess,
 }) => {
   const { language, isRTL } = useLanguage();
-  const { services, getCurrencySymbol, activeDoctors, getDoctorById } = useSettings();
+  // const { services, getCurrencySymbol, activeDoctors, getDoctorById } = useSettings(); // Removed
+  const { user } = useAuth();
   const [activeCases, setActiveCases] = useState<TreatmentCase[]>([]);
 
+  // Local State replacement for SettingsContext
+  const [doctors, setDoctors] = useState<Doctor[]>([]);
+  const [services, setServices] = useState<Service[]>([]);
+
+  useEffect(() => {
+    if (open) {
+      // Fetch Doctors
+      // @ts-ignore
+      if (window.electron && window.electron.ipcRenderer) {
+        // @ts-ignore
+        window.electron.ipcRenderer.invoke('doctors:getAll')
+          .then((data: any) => {
+            if (Array.isArray(data)) {
+              setDoctors(data);
+            }
+          })
+          .catch((err: any) => console.error("Failed to load doctors", err));
+
+        // @ts-ignore
+        window.electron.ipcRenderer.invoke('services:getAll')
+          .then((data: any) => {
+            if (Array.isArray(data)) {
+              // Map if necessary, assuming raw DB rows
+              setServices(data.map((s: any) => ({
+                ...s,
+                defaultPrice: s.default_price // Map snake to camel
+              })));
+            }
+          })
+          .catch((err: any) => console.error("Failed to load services", err));
+      }
+    }
+  }, [open]);
+
+  const getCurrencySymbol = (lang: string) => lang === 'ar' ? 'ج.م' : 'EGP';
   const currencySymbol = getCurrencySymbol(language as 'en' | 'ar');
 
   const [formData, setFormData] = useState({
@@ -66,37 +121,44 @@ export const MarkAttendedDialog: React.FC<MarkAttendedDialogProps> = ({
 
   useEffect(() => {
     if (appointment) {
-      getActiveTreatmentCasesByPatient(appointment.patientId).then(cases => {
+      getActiveTreatmentCasesByPatient(appointment.patientId, user?.email).then(cases => {
         setActiveCases(cases);
 
-        // Pre-fill service from appointment - look up in settings by name
-        const service = services.find(s => s.name === appointment.service);
+        // Pre-fill service from appointment - look up in settings by ID (preferred) or Name (legacy)
+        const serviceById = services.find(s => s.id === appointment.service);
+        const serviceByName = services.find(s => s.name === appointment.service);
+        const service = serviceById || serviceByName;
+
         // Auto-select first active doctor
-        const defaultDoctorId = activeDoctors.length > 0 ? activeDoctors[0].id : '';
+        const defaultDoctorId = doctors.length > 0 ? doctors[0].id : '';
+        const appointmentDoctorId = appointment.doctorId || defaultDoctorId;
 
         setFormData({
           treatmentCaseId: 'new',
-          serviceName: appointment.service,
+          serviceName: service ? service.name : (appointment.serviceName || ''),
           cost: service?.defaultPrice || 0,
           amountPaidToday: 0,
-          doctorId: defaultDoctorId,
-          newCaseName: appointment.service,
+          doctorId: appointmentDoctorId,
+          newCaseName: service ? service.name : (appointment.serviceName || ''),
         });
         setSelectedCaseData(null);
       });
     }
-  }, [appointment, services, activeDoctors]);
+  }, [appointment, services, doctors]); // Added doctors dependency
 
   // Handle treatment case selection - auto-load data and sync service
   const handleTreatmentCaseChange = (value: string) => {
     if (value === 'new') {
       setSelectedCaseData(null);
       // Reset to appointment's original service - look up in settings
-      const service = services.find(s => s.name === appointment?.service);
+      const serviceById = services.find(s => s.id === appointment?.service);
+      const serviceByName = services.find(s => s.name === appointment?.service);
+      const service = serviceById || serviceByName;
+
       setFormData(prev => ({
         ...prev,
         treatmentCaseId: value,
-        serviceName: appointment?.service || '',
+        serviceName: service ? service.name : (appointment?.serviceName || ''),
         cost: service?.defaultPrice || 0,
         amountPaidToday: 0,
       }));
@@ -124,6 +186,14 @@ export const MarkAttendedDialog: React.FC<MarkAttendedDialogProps> = ({
     // Only allow service change for new treatment cases
     if (formData.treatmentCaseId !== 'new') return;
 
+    // We store service NAME in formData currently, maybe we should switch to ID later,
+    // but the backend expects name string for legacy reasons or we pass ID as name?
+    // Wait, createAppointment stores ID.
+    // Here we are creating an Invoice or updating Treatment Case.
+    // The markAttended API expects 'serviceName' (string).
+    // So we need to look up the service object by name if user selects from dropdown.
+
+    // UI dropdown value is service NAME (based on existing code).
     const service = services.find(s => s.name === serviceName);
     setFormData(prev => ({
       ...prev,
@@ -169,11 +239,13 @@ export const MarkAttendedDialog: React.FC<MarkAttendedDialogProps> = ({
       }
     } else {
       // For new cases: require service name and cost
-      if (!formData.serviceName || formData.cost <= 0) {
-        console.warn('MarkAttendedDialog: Invalid service or cost for new case', formData);
+      if (!formData.serviceName || formData.cost < 0) { // allow 0 cost? Maybe free checkup
+        // Just check serviceName presence
+      }
+      if (!formData.serviceName) {
         toast({
           title: language === 'ar' ? 'خطأ' : 'Error',
-          description: language === 'ar' ? 'يرجى اختيار الخدمة وتحديد التكلفة' : 'Please select a service and set the cost',
+          description: language === 'ar' ? 'يرجى اختيار الخدمة' : 'Please select a service',
           variant: 'destructive',
         });
         return;
@@ -200,7 +272,8 @@ export const MarkAttendedDialog: React.FC<MarkAttendedDialogProps> = ({
         formData.amountPaidToday,
         formData.doctorId,
         formData.newCaseName,
-        formData.newCaseName // Using same name for both
+        formData.newCaseName, // newCaseNameAr
+        user?.email
       );
 
       console.log('MarkAttendedDialog: Result:', result);
@@ -284,11 +357,17 @@ export const MarkAttendedDialog: React.FC<MarkAttendedDialogProps> = ({
                 <SelectValue placeholder={language === 'ar' ? 'اختر الطبيب' : 'Select doctor'} />
               </SelectTrigger>
               <SelectContent className="bg-popover z-50">
-                {activeDoctors.map((doctor) => (
-                  <SelectItem key={doctor.id} value={doctor.id}>
-                    {doctor.name}
+                {doctors.length === 0 ? (
+                  <SelectItem value="none" disabled>
+                    {language === 'ar' ? 'لا يوجد أطباء' : 'No doctors found'}
                   </SelectItem>
-                ))}
+                ) : (
+                  doctors.map((doctor) => (
+                    <SelectItem key={doctor.id} value={doctor.id}>
+                      {doctor.name}
+                    </SelectItem>
+                  ))
+                )}
               </SelectContent>
             </Select>
           </div>

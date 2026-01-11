@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, User, FileText } from 'lucide-react';
+import { Calendar, Clock, User, FileText, Stethoscope } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/popover";
 import { Check, ChevronsUpDown } from "lucide-react";
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 import { createAppointment } from '@/services/appointmentService';
 import { getActivePatients, Patient } from '@/services/patientService';
@@ -57,22 +58,33 @@ interface Service {
   price: number;
 }
 
+interface Doctor {
+  id: string;
+  name: string;
+}
+
 export const BookAppointmentDialog: React.FC<BookAppointmentDialogProps> = ({
   open,
   onOpenChange,
   onSuccess,
 }) => {
   const { language, isRTL } = useLanguage();
+  const { user } = useAuth();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [availableServices, setAvailableServices] = useState<Service[]>([]);
+  const [doctors, setDoctors] = useState<Doctor[]>([]);
 
   useEffect(() => {
     if (open) {
-      getActivePatients().then(setPatients);
-      db.services.getAll().then((data: any) => {
-        // Data map might be needed if raw DB structure differs slightly
-        setAvailableServices(data);
+      getActivePatients(user?.email).then(setPatients);
+
+      db.services.getAll(user?.email).then((data: any) => {
+        setAvailableServices(Array.isArray(data) ? data : []);
       }).catch(err => console.error("Failed to load services", err));
+
+      db.doctors.getAll(user?.email).then((data: any) => {
+        setDoctors(Array.isArray(data) ? data : []);
+      }).catch(err => console.error("Failed to load doctors", err));
     }
   }, [open]);
 
@@ -83,6 +95,7 @@ export const BookAppointmentDialog: React.FC<BookAppointmentDialogProps> = ({
     date: new Date().toISOString().split('T')[0],
     time: '09:00',
     service: '', // This will now store the Service ID
+    doctorId: '', // Doctor ID
     notes: '',
   });
 
@@ -102,6 +115,17 @@ export const BookAppointmentDialog: React.FC<BookAppointmentDialogProps> = ({
       toast({
         title: "Error",
         description: "Please fill all required fields",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    // Doctor is NOT strictly required by generic logic but schema has it as optional, 
+    // but User Request says "dropdown must not allow submission if doctor is not selected".
+    if (!formData.doctorId) {
+      toast({
+        title: "Error",
+        description: language === 'ar' ? 'يرجى اختيار الطبيب المعالج' : 'Please select a treating doctor',
         variant: "destructive"
       });
       return;
@@ -127,9 +151,10 @@ export const BookAppointmentDialog: React.FC<BookAppointmentDialogProps> = ({
         time: formData.time,
         service: selectedService.id, // Store ID
         serviceAr: selectedService.name_ar || selectedService.name,
+        doctorId: formData.doctorId, // Store Doctor ID
         status: 'booked',
         notes: formData.notes,
-      });
+      }, user?.email);
 
       toast({
         title: language === 'ar' ? 'تم الحجز' : 'Appointment Booked',
@@ -142,6 +167,7 @@ export const BookAppointmentDialog: React.FC<BookAppointmentDialogProps> = ({
         date: new Date().toISOString().split('T')[0],
         time: '09:00',
         service: '',
+        doctorId: '',
         notes: '',
       });
 
@@ -149,9 +175,19 @@ export const BookAppointmentDialog: React.FC<BookAppointmentDialogProps> = ({
       onOpenChange(false);
     } catch (error: any) {
       console.error("Booking error:", error);
+
+      let title = "Booking Failed";
+      let description = error.message || "Unknown error occurred";
+
+      // Handle User-Facing License Errors
+      if (description.includes('LICENSE_EXPIRED')) {
+        title = language === 'ar' ? 'فشل الحفظ' : 'Booking Failed';
+        description = language === 'ar' ? 'يرجى تفعيل الرخصة' : 'Please activate the license';
+      }
+
       toast({
-        title: "Booking Failed",
-        description: error.message || "Unknown error occurred",
+        title: title,
+        description: description,
         variant: "destructive"
       });
     }
@@ -264,12 +300,12 @@ export const BookAppointmentDialog: React.FC<BookAppointmentDialogProps> = ({
 
           {/* Service */}
           <div className="space-y-2">
-            <Label>{language === 'ar' ? 'الخدمة' : 'Service'}</Label>
+            <Label className={cn("flex items-center gap-2", isRTL && "flex-row-reverse")}>{language === 'ar' ? 'الخدمة' : 'Service'}</Label>
             <Select
               value={formData.service}
               onValueChange={(value) => setFormData(prev => ({ ...prev, service: value }))}
             >
-              <SelectTrigger>
+              <SelectTrigger className={cn(isRTL && "flex-row-reverse")}>
                 <SelectValue placeholder={language === 'ar' ? 'اختر الخدمة' : 'Select service'} />
               </SelectTrigger>
               <SelectContent>
@@ -279,8 +315,37 @@ export const BookAppointmentDialog: React.FC<BookAppointmentDialogProps> = ({
                   </div>
                 ) : (
                   availableServices.map((service) => (
-                    <SelectItem key={service.id} value={service.id}>
-                      {language === 'ar' && service.name_ar ? service.name_ar : service.name}
+                    <SelectItem key={service.id} value={service.id} className={cn(isRTL && "flex-row-reverse")}>
+                      {language === 'ar' && service.name_ar ? service.name_ar : service.name} - {service.price} {language === 'ar' ? 'ج.م' : 'EGP'}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Doctor */}
+          <div className="space-y-2">
+            <Label className={cn("flex items-center gap-2", isRTL && "flex-row-reverse")}>
+              <Stethoscope className="w-4 h-4" />
+              {language === 'ar' ? 'الطبيب' : 'Doctor'}
+            </Label>
+            <Select
+              value={formData.doctorId}
+              onValueChange={(value) => setFormData(prev => ({ ...prev, doctorId: value }))}
+            >
+              <SelectTrigger className={cn(isRTL && "flex-row-reverse")}>
+                <SelectValue placeholder={language === 'ar' ? 'اختر الطبيب' : 'Select doctor'} />
+              </SelectTrigger>
+              <SelectContent>
+                {doctors.length === 0 ? (
+                  <div className="p-2 text-sm text-muted-foreground text-center">
+                    {language === 'ar' ? 'لا يوجد أطباء' : 'No doctors found'}
+                  </div>
+                ) : (
+                  doctors.map((doctor) => (
+                    <SelectItem key={doctor.id} value={doctor.id} className={cn(isRTL && "flex-row-reverse")}>
+                      {doctor.name}
                     </SelectItem>
                   ))
                 )}
@@ -299,10 +364,11 @@ export const BookAppointmentDialog: React.FC<BookAppointmentDialogProps> = ({
               onChange={(e) => setFormData(prev => ({ ...prev, notes: e.target.value }))}
               placeholder={language === 'ar' ? 'ملاحظات إضافية...' : 'Additional notes...'}
               rows={3}
+              className={cn(isRTL && "text-right")}
             />
           </div>
 
-          <DialogFooter className={cn(isRTL && "flex-row-reverse")}>
+          <DialogFooter className={cn(isRTL && "flex-row-reverse gap-2 sm:gap-0")}>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               {language === 'ar' ? 'إلغاء' : 'Cancel'}
             </Button>
@@ -315,3 +381,5 @@ export const BookAppointmentDialog: React.FC<BookAppointmentDialogProps> = ({
     </Dialog>
   );
 };
+
+export default BookAppointmentDialog;

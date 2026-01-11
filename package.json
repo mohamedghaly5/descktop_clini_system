@@ -1,18 +1,50 @@
 {
-  "name": "vite_react_shadcn_ts",
+  "name": "dental-flow",
+  "productName": "Dental Flow",
+  "version": "1.0.1",
+  "description": "نظام إدارة عيادة الأسنان",
   "private": true,
-  "version": "0.0.0",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "build:dev": "vite build --mode development",
-    "lint": "eslint .",
-    "preview": "vite preview",
-    "electron:compile": "tsc -p electron/tsconfig.json && node electron/configure-cjs.js",
-    "electron:dev": "npm run electron:compile && concurrently -k \"cross-env BROWSER=none npm run dev\" \"wait-on tcp:8080 && cross-env NODE_ENV=development electron .\"",
-    "electron:build": "npm run build && npm run electron:compile && electron-builder"
+    "dev": "concurrently \"vite\" \"wait-on tcp:8080 && tsc -b electron && tsc -p electron/tsconfig.preload.json && electron .\"",
+    "build": "tsc -b electron && tsc -p electron/tsconfig.preload.json && vite build && electron-builder",
+    "deploy": "electron-builder --win --publish always",
+    "preview": "vite preview"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mohamedghaly5/descktop_clini_system.git"
+  },
+  "build": {
+    "asar": false,
+    "appId": "com.ghaly.dentalapp",
+    "directories": {
+      "output": "release"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "mohamedghaly5",
+        "repo": "descktop_clini_system"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "public/icon.ico"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": ".env.production",
+        "to": ".env.production"
+      }
+    ],
+    "extends": null
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -45,17 +77,23 @@
     "@radix-ui/react-tooltip": "^1.2.7",
     "@supabase/supabase-js": "^2.89.0",
     "@tanstack/react-query": "^5.83.0",
+    "adm-zip": "^0.5.16",
     "better-sqlite3": "^12.5.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "date-fns": "^3.6.0",
+    "dotenv": "^17.2.3",
+    "electron-store": "^11.0.2",
+    "electron-updater": "^6.6.2",
     "embla-carousel-react": "^8.6.0",
+    "googleapis": "^169.0.0",
     "input-otp": "^1.4.2",
     "jspdf": "^3.0.4",
     "jspdf-autotable": "^5.0.2",
     "lucide-react": "^0.462.0",
     "next-themes": "^0.3.0",
+    "node-machine-id": "^1.1.12",
     "react": "^18.3.1",
     "react-day-picker": "^8.10.1",
     "react-dom": "^18.3.1",
@@ -73,6 +111,7 @@
   "devDependencies": {
     "@eslint/js": "^9.32.0",
     "@tailwindcss/typography": "^0.5.16",
+    "@types/adm-zip": "^0.5.7",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.19.3",
     "@types/react": "^18.3.23",
@@ -95,19 +134,5 @@
     "typescript-eslint": "^8.38.0",
     "vite": "^5.4.19",
     "wait-on": "^9.0.3"
-  },
-  "build": {
-    "appId": "com.dentalflow.app",
-    "productName": "Dental Flow",
-    "directories": {
-      "output": "release"
-    },
-    "files": [
-      "dist/**/*",
-      "dist-electron/**/*"
-    ],
-    "win": {
-      "target": "nsis"
-    }
   }
 }

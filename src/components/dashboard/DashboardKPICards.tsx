@@ -1,28 +1,30 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Calendar, DollarSign, AlertTriangle, Star } from 'lucide-react';
+import { Calendar, DollarSign, AlertTriangle, Star, TrendingDown } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useSettings } from '@/contexts/SettingsContext';
 import { cn } from '@/lib/utils';
 import { Appointment, Invoice } from '@/services/appointmentService';
+import { Expense } from '@/hooks/useExpenses';
+// ... (imports)
 
 interface DashboardKPICardsProps {
   todayAppointments: Appointment[];
   todayInvoices: Invoice[];
   allInvoices: Invoice[];
+  expenses?: Expense[];
 }
 
 const DashboardKPICards: React.FC<DashboardKPICardsProps> = ({
   todayAppointments,
   todayInvoices,
   allInvoices,
+  expenses = [],
 }) => {
   const navigate = useNavigate();
-  const { language } = useLanguage();
+  const { language, t } = useLanguage();
   const { formatCurrency, getCurrencySymbol } = useSettings();
-
-  const currencySymbol = getCurrencySymbol(language as 'en' | 'ar');
 
   // Calculate KPIs
   const attendedToday = todayAppointments.filter(a => a.status === 'attended').length;
@@ -30,7 +32,7 @@ const DashboardKPICards: React.FC<DashboardKPICardsProps> = ({
   const cancelledToday = todayAppointments.filter(a => a.status === 'cancelled').length;
 
   const todayIncome = todayInvoices.reduce((sum, inv) => sum + inv.amountPaid, 0);
-  
+
   const outstandingBalance = allInvoices.reduce((sum, inv) => sum + inv.balance, 0);
 
   // Get top service today
@@ -41,7 +43,41 @@ const DashboardKPICards: React.FC<DashboardKPICardsProps> = ({
   });
   const topService = Object.entries(serviceCount).sort((a, b) => b[1] - a[1])[0];
 
-  const kpis = [
+  // Calculate Expenses
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const localTodayVal = `${year}-${month}-${day}`;
+
+  const currentMonth = now.getMonth();
+  const currentYear = now.getFullYear();
+
+  let todayExpenses = 0;
+  let monthExpenses = 0;
+
+  expenses.forEach(exp => {
+    // Check Today
+    if (exp.date === localTodayVal) {
+      todayExpenses += Number(exp.amount) || 0;
+    }
+
+    // Check Month
+    const expD = new Date(exp.date + 'T00:00:00');
+    if (expD.getMonth() === currentMonth && expD.getFullYear() === currentYear) {
+      monthExpenses += Number(exp.amount) || 0;
+    }
+  });
+
+
+
+  // Re-arrange or add to end? 
+  // User asked to ADD. Let's append them or insert intelligently.
+  // Current: Appointments, Income, Balance, Top Service.
+  // Let's replace "Top Service" or append.  User said "Add expense-related summary cards".
+  // Let's add them to the grid. The grid is responsive.
+
+  const allKpis: any[] = [
     {
       title: language === 'ar' ? 'مواعيد اليوم' : "Today's Appointments",
       value: todayAppointments.length.toString(),
@@ -64,6 +100,14 @@ const DashboardKPICards: React.FC<DashboardKPICardsProps> = ({
       clickable: true,
     },
     {
+      title: t('expenses.summary.daily'),
+      value: formatCurrency(todayExpenses, language),
+      icon: TrendingDown,
+      gradient: 'bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-400',
+      onClick: () => navigate('/expenses'),
+      clickable: true,
+    },
+    {
       title: language === 'ar' ? 'الرصيد المستحق' : 'Outstanding Balance',
       value: formatCurrency(outstandingBalance, language),
       icon: AlertTriangle,
@@ -83,9 +127,11 @@ const DashboardKPICards: React.FC<DashboardKPICardsProps> = ({
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-      {kpis.map((kpi, index) => (
+      {allKpis.map((kpi, index) => (
         <Card
           key={kpi.title}
+          // ... same
+
           variant="stat"
           className={cn(
             "p-5 animate-fade-in opacity-0 transition-all",
@@ -110,7 +156,7 @@ const DashboardKPICards: React.FC<DashboardKPICardsProps> = ({
           {/* Body: Numbers and Stats */}
           <div className="space-y-1">
             <p className="text-2xl font-bold text-foreground ltr-nums">{kpi.value}</p>
-            
+
             {kpi.subItems && (
               <div className="flex flex-wrap gap-2 pt-1">
                 {kpi.subItems.map((item) => (
@@ -120,7 +166,7 @@ const DashboardKPICards: React.FC<DashboardKPICardsProps> = ({
                 ))}
               </div>
             )}
-            
+
             {kpi.subText && (
               <p className="text-xs text-muted-foreground ltr-nums">{kpi.subText}</p>
             )}

@@ -1,54 +1,125 @@
-"use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.registerHandlers = registerHandlers;
-const electron_1 = require("electron");
-const path_1 = __importDefault(require("path"));
-const database_1 = require("./database");
-const crypto_1 = require("crypto");
-const XLSX = __importStar(require("xlsx"));
-const fs = __importStar(require("fs"));
-function registerHandlers() {
-    const db = (0, database_1.getDb)();
-    // --- Financial Export ---
-    // --- Financial Export ---
-    electron_1.ipcMain.handle('financials:export', async () => {
+import { ipcMain, dialog, app } from 'electron';
+import path from 'path';
+import { getDb, initializeDatabase, closeConnection, isSystemReadOnly } from './db/init.js';
+import { getCurrentClinicId } from './db/getCurrentClinicId.js';
+import { registerAuthHandlers } from './handlers/auth.js';
+import { appMetaService } from './services/appMetaService.js';
+// @ts-ignore
+import { up as migrateClinics } from './db/migrations/001_clinics_migration.js';
+import { validateSchema } from './db/validate_schema.js';
+import { randomUUID } from 'crypto';
+import * as XLSX from 'xlsx';
+import * as fs from 'fs';
+import { supabase } from './services/supabaseClient.js';
+import { backupService } from './services/backupService.js';
+import { googleDriveService } from './services/googleDriveService.js';
+import { registerLicenseHandlers } from './ipc/license.ipc.js';
+import { registerLabHandlers } from './ipc/lab.ipc.js';
+import { licenseService } from './license/license.service.js';
+import { logger } from './utils/logger.js';
+export function registerHandlers() {
+    initializeDatabase();
+    registerAuthHandlers();
+    registerLicenseHandlers();
+    registerLabHandlers();
+    // NOTE: We do NOT capture 'const db = getDb()' here anymore.
+    // All handlers must call getDb() inside them to ensure they get the current active connection,
+    // especially after a restore operation closes the old one.
+    // --- System Status ---
+    ipcMain.handle('system:get-status', () => {
+        return { isReadOnly: isSystemReadOnly() };
+    });
+    ipcMain.handle('system:migrate-clinics', () => {
         try {
+            logger.info('Starting clinics migration...');
+            migrateClinics(getDb());
+            return { success: true };
+        }
+        catch (error) {
+            logger.error('Migration failed:', error);
+            return { success: false, error: error.message };
+        }
+    });
+    ipcMain.handle('system:validate-schema', () => {
+        return validateSchema();
+    });
+    const checkReadOnly = () => {
+        if (isSystemReadOnly()) {
+            throw new Error('SYSTEM_READ_ONLY: The system is currently in read-only mode for maintenance.');
+        }
+        if (!licenseService.isWriteAllowed()) {
+            throw new Error('LICENSE_EXPIRED: Your subscription has expired. The system is in read-only mode.');
+        }
+    };
+    // --- Helper to get current clinic_id from user ---
+    // --- Helper to get current clinic_id from user ---
+    const getContext = () => {
+        const userId = appMetaService.get('current_user_id');
+        if (!userId) {
+            // Fallback: Try to get default clinic if no user logged in (e.g. during simple setup or single tenant mode)
+            try {
+                // Check clinics (V2)
+                const clinicV2 = getDb().prepare('SELECT id FROM clinics LIMIT 1').get();
+                if (clinicV2)
+                    return { clinicId: clinicV2.id };
+            }
+            catch (e) { /* ignore */ }
+            return null;
+        }
+        try {
+            const user = getDb().prepare('SELECT clinic_id FROM users WHERE id = ?').get(userId);
+            if (user && user.clinic_id) {
+                return { clinicId: user.clinic_id };
+            }
+        }
+        catch (e) { /* ignore */ }
+        // Final Fallback
+        try {
+            const clinic = getDb().prepare('SELECT id FROM clinic_settings LIMIT 1').get();
+            if (clinic)
+                return { clinicId: clinic.id };
+            // Check clinics (V2)
+            const clinicV2 = getDb().prepare('SELECT id FROM clinics LIMIT 1').get();
+            if (clinicV2)
+                return { clinicId: clinicV2.id };
+        }
+        catch (e) { /* ignore */ }
+        return null;
+    };
+    // --- Notifications ---
+    ipcMain.handle('notifications:get-all', async (_, { userId }) => {
+        try {
+            const { data, error } = await supabase
+                .from('notifications')
+                .select('*')
+                .order('created_at', { ascending: false })
+                .limit(20);
+            if (error)
+                throw error;
+            return { success: true, data };
+        }
+        catch (error) {
+            console.error('Failed to fetch notifications:', error);
+            return { success: false, error: error.message };
+        }
+    });
+    ipcMain.handle('notifications:mark-read', async (_, { id }) => {
+        try {
+            const { error } = await supabase.from('notifications').update({ read: true }).eq('id', id);
+            if (error)
+                throw error;
+            return { success: true };
+        }
+        catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+    // --- Financial Export ---
+    ipcMain.handle('financials:export', async () => {
+        try {
+            const ctx = getContext();
+            if (!ctx)
+                throw new Error('No active clinic context found');
             // 1. Execute Query (Fetch Raw Data)
             const query = `
                 SELECT
@@ -64,9 +135,10 @@ function registerHandlers() {
                 LEFT JOIN patients ON invoices.patient_id = patients.id
                 LEFT JOIN treatment_cases ON invoices.treatment_case_id = treatment_cases.id
                 LEFT JOIN doctors ON invoices.doctor_id = doctors.id
+                WHERE (invoices.clinic_id = ? OR invoices.clinic_id = 'clinic_001')
                 ORDER BY invoices.created_at ASC
             `;
-            const rows = db.prepare(query).all();
+            const rows = getDb().prepare(query).all(ctx.clinicId);
             // 2. Transform Data (Use Persistent IDs)
             const transformedRows = rows.map((row, index) => {
                 return {
@@ -100,7 +172,7 @@ function registerHandlers() {
             worksheet['!cols'] = wscols;
             const buffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' });
             // 4. Save Dialog
-            const { canceled, filePath } = await electron_1.dialog.showSaveDialog({
+            const { canceled, filePath } = await dialog.showSaveDialog({
                 title: 'تصدير التقرير المالي',
                 defaultPath: `Financial_Report_${new Date().toISOString().slice(0, 10)}.xlsx`,
                 filters: [{ name: 'Excel Files', extensions: ['xlsx'] }]
@@ -117,43 +189,85 @@ function registerHandlers() {
             return { success: false, error: error.message };
         }
     });
-    // Generic DB Query Handler (for rapid refactoring, though specific handlers are better strictly speaking)
-    // For this MVP transition, we'll implement specific generic actions per resource to mimic basic Supabase operations.
     // --- Patients ---
-    electron_1.ipcMain.handle('patients:getAll', (_, { clinicId }) => {
-        // Note: clinicId might be used for filtering if we support multi-tenancy locally, 
-        // but for local SQLite usually it's single tenant. We'll ignore it or use it if schema has it.
-        // Our schema has clinic_id.
-        let query = 'SELECT * FROM patients ORDER BY created_at DESC';
-        const params = [];
-        if (clinicId) {
-            query = 'SELECT * FROM patients WHERE clinic_id = ? ORDER BY created_at DESC';
-            params.push(clinicId);
-        }
-        return db.prepare(query).all(...params);
-    });
-    electron_1.ipcMain.handle('patients:create', (_, data) => {
-        const id = (0, crypto_1.randomUUID)();
-        const keys = Object.keys(data);
-        const values = Object.values(data);
-        const placeholders = keys.map(() => '?');
-        // Get next display_id
-        const maxId = db.prepare('SELECT MAX(display_id) as max FROM patients').get()?.max || 0;
-        const displayId = maxId + 1;
-        // Add ID and display_id to data
-        const cols = ['id', 'display_id', ...keys].join(',');
-        const vals = [id, displayId, ...values];
-        const phs = ['?', '?', ...placeholders].join(',');
+    ipcMain.handle('patients:getAll', () => {
         try {
-            const stmt = db.prepare(`INSERT INTO patients (${cols}) VALUES (${phs})`);
+            const clinicId = getCurrentClinicId();
+            const query = "SELECT * FROM patients WHERE (clinic_id = ? OR clinic_id = 'clinic_001') ORDER BY created_at DESC";
+            return getDb().prepare(query).all(clinicId);
+        }
+        catch (e) {
+            console.error('[patients:getAll] Error:', e);
+            return [];
+        }
+    });
+    ipcMain.handle('patients:getById', (_, id) => {
+        try {
+            const patient = getDb().prepare('SELECT * FROM patients WHERE id = ?').get(id);
+            return patient || null;
+        }
+        catch (error) {
+            console.error('Error fetching patient:', error);
+            return null;
+        }
+    });
+    ipcMain.handle('patients:create', (_, data) => {
+        checkReadOnly();
+        const id = randomUUID();
+        // Strict Single Source of Truth
+        try {
+            const clinicId = getCurrentClinicId();
+            // whitelist allowed columns only
+            const allowedColumns = ['full_name', 'phone', 'gender', 'city_id', 'notes', 'medical_history'];
+            const dbData = {};
+            // Map known fields if they exist
+            if (data.full_name)
+                dbData.full_name = data.full_name;
+            if (data.name)
+                dbData.full_name = data.name; // Fallback mapping
+            if (data.phone)
+                dbData.phone = data.phone;
+            if (data.gender)
+                dbData.gender = data.gender;
+            if (data.city_id)
+                dbData.city_id = data.city_id;
+            if (data.cityId)
+                dbData.city_id = data.cityId; // Fallback
+            if (data.notes)
+                dbData.notes = data.notes;
+            // Map medical history (snake_case or camelCase input)
+            if (data.medical_history)
+                dbData.medical_history = data.medical_history;
+            else if (data.medicalHistory)
+                dbData.medical_history = data.medicalHistory;
+            // Map birth_date (birth_date or birthDate input)
+            if (data.birth_date)
+                dbData.birth_date = data.birth_date;
+            else if (data.birthDate)
+                dbData.birth_date = data.birthDate;
+            // Construct Insert
+            const keys = Object.keys(dbData);
+            const values = keys.map(k => dbData[k]);
+            const placeholders = keys.map(() => '?');
+            const maxId = getDb().prepare('SELECT MAX(display_id) as max FROM patients').get()?.max || 0;
+            const displayId = maxId + 1;
+            // Force clinic_id insert
+            const cols = ['id', 'display_id', 'clinic_id', ...keys].join(',');
+            const vals = [id, displayId, clinicId, ...values];
+            const phs = ['?', '?', '?', ...placeholders].join(',');
+            const stmt = getDb().prepare(`INSERT INTO patients (${cols}) VALUES (${phs})`);
             stmt.run(...vals);
-            return { data: { ...data, id }, error: null };
+            return { data: { ...dbData, id, clinicId }, error: null };
         }
         catch (err) {
+            console.error('[patients:create] Error:', err);
             return { data: null, error: err.message };
         }
     });
-    electron_1.ipcMain.handle('patients:import', async (_, buffer) => {
+    ipcMain.handle('patients:import', async (_, { buffer }) => {
+        checkReadOnly();
+        // Strict Single Source of Truth
+        const effectiveClinicId = getCurrentClinicId();
         try {
             const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array' });
             const sheetName = workbook.SheetNames[0];
@@ -162,40 +276,34 @@ function registerHandlers() {
             let successCount = 0;
             let failedCount = 0;
             const errors = [];
-            // Mapping helpers
             const sanitizePhone = (p) => String(p).replace(/[\s\-\(\)\.]/g, '').trim();
-            const genderMap = {
-                'ذكر': 'male', 'أنثى': 'female', 'انثى': 'female',
-                'male': 'male', 'female': 'female'
-            };
-            const insertStmt = db.prepare(`
-                INSERT INTO patients (id, full_name, phone, age, gender, created_at)
-                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            const genderMap = { 'ذكر': 'male', 'أنثى': 'female', 'انثى': 'female', 'male': 'male', 'female': 'female' };
+            const insertStmt = getDb().prepare(`
+                INSERT INTO patients (id, display_id, clinic_id, full_name, phone, gender, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             `);
-            const checkStmt = db.prepare('SELECT id FROM patients WHERE phone = ?');
-            const transaction = db.transaction((rows) => {
+            const checkStmt = getDb().prepare("SELECT id FROM patients WHERE phone = ? AND (clinic_id = ? OR clinic_id = 'clinic_001')");
+            const maxIdStmt = getDb().prepare('SELECT MAX(display_id) as max FROM patients');
+            const transaction = getDb().transaction((rows) => {
+                let currentDisplayId = maxIdStmt.get()?.max || 0;
                 for (const row of rows) {
-                    // Map columns
                     const name = row['الاسم'] || row['name'] || row['full_name'] || row['Name'];
                     const phoneRaw = row['رقم الهاتف'] || row['phone'] || row['Phone'];
-                    const ageRaw = row['السن'] || row['age'] || row['Age'];
+                    // const ageRaw = row['السن'] || row['age'] || row['Age']; // Age cannot be stored
                     const genderRaw = row['النوع'] || row['gender'] || row['Gender'];
                     if (!name || !phoneRaw) {
-                        failedCount++; // Skip invalid
+                        failedCount++;
                         continue;
                     }
                     const phone = sanitizePhone(phoneRaw);
                     const gender = genderMap[genderRaw] || genderMap[String(genderRaw).toLowerCase()] || null;
-                    const age = parseInt(ageRaw) || null;
-                    // Check duplicate
-                    const existing = checkStmt.get(phone);
-                    if (existing) {
-                        // Skip duplicate silently or count as failed/skimmed?
-                        // Prompt says "Handle duplicates gracefully... skip that row"
+                    // const age = parseInt(ageRaw) || null;
+                    if (checkStmt.get(phone, effectiveClinicId)) {
                         continue;
-                    }
+                    } // Duplicate check
+                    currentDisplayId++;
                     try {
-                        insertStmt.run((0, crypto_1.randomUUID)(), name, phone, age, gender);
+                        insertStmt.run(randomUUID(), currentDisplayId, effectiveClinicId, name, phone, gender);
                         successCount++;
                     }
                     catch (e) {
@@ -208,67 +316,283 @@ function registerHandlers() {
             return { successCount, failedCount, errors };
         }
         catch (error) {
-            console.error('Import Error:', error);
-            // Return valid structure even on crash
             return { successCount: 0, failedCount: 0, errors: [error.message] };
         }
     });
     // --- Appointments ---
-    electron_1.ipcMain.handle('appointments:getAll', () => {
-        return db.prepare(`
-            SELECT A.*, TC.name as service_name
-            FROM appointments A
-            LEFT JOIN treatment_cases TC ON A.treatment_case_id = TC.id
-            ORDER BY A.date DESC, A.time DESC
-        `).all();
-    });
-    electron_1.ipcMain.handle('appointments:create', (_, data) => {
-        const id = (0, crypto_1.randomUUID)();
-        const keys = Object.keys(data);
-        const values = Object.values(data);
-        const placeholders = keys.map(() => '?');
-        const cols = ['id', ...keys].join(',');
-        const vals = [id, ...values];
-        const phs = ['?', ...placeholders].join(',');
+    ipcMain.handle('appointments:getAll', () => {
         try {
-            db.prepare(`INSERT INTO appointments (${cols}) VALUES (${phs})`).run(...vals);
-            return { data: { ...data, id }, error: null };
+            // Strict Single Source of Truth
+            const effectiveClinicId = getCurrentClinicId();
+            return getDb().prepare(`
+                SELECT A.*, TC.name as service_name
+                FROM appointments A
+                LEFT JOIN treatment_cases TC ON A.treatment_case_id = TC.id
+                WHERE (A.clinic_id = ? OR A.clinic_id = 'clinic_001')
+                ORDER BY A.date DESC, A.time DESC
+            `).all(effectiveClinicId);
+        }
+        catch (e) {
+            console.error('[appointments:getAll] Error:', e);
+            return [];
+        }
+    });
+    ipcMain.handle('appointments:create', (_, data) => {
+        checkReadOnly();
+        // Strict Single Source of Truth
+        const clinicId = getCurrentClinicId();
+        const { ownerEmail, ...cleanData } = data; // strip old field
+        const id = randomUUID();
+        const keys = Object.keys(cleanData).filter(k => k !== 'clinicId');
+        const values = keys.map(k => cleanData[k]);
+        const placeholders = keys.map(() => '?');
+        const cols = ['id', 'clinic_id', ...keys].join(',');
+        const vals = [id, clinicId, ...values];
+        const phs = ['?', '?', ...placeholders].join(',');
+        try {
+            getDb().prepare(`INSERT INTO appointments (${cols}) VALUES (${phs})`).run(...vals);
+            return { data: { ...cleanData, id }, error: null };
         }
         catch (err) {
             return { data: null, error: err.message };
         }
     });
     // --- Doctors ---
-    electron_1.ipcMain.handle('doctors:getAll', () => db.prepare('SELECT * FROM doctors ORDER BY name ASC').all());
+    // --- Doctors ---
+    ipcMain.handle('doctors:getAll', () => {
+        try {
+            const clinicId = getCurrentClinicId();
+            // User requested filtering by active=1 and is_deleted=0
+            // Assuming default active=1 and is_deleted=0 if not set, but query should be explicit.
+            return getDb().prepare("SELECT * FROM doctors WHERE (clinic_id = ? OR clinic_id = 'clinic_001') AND (is_deleted IS NULL OR is_deleted = 0) AND (active IS NULL OR active = 1) ORDER BY name ASC").all(clinicId);
+        }
+        catch (e) {
+            console.error('[doctors:getAll] Error:', e);
+            return [];
+        }
+    });
+    ipcMain.handle('staff:get-all', () => {
+        try {
+            const clinicId = getCurrentClinicId();
+            return getDb().prepare("SELECT * FROM doctors WHERE (clinic_id = ? OR clinic_id = 'clinic_001') AND (is_deleted = 0 OR is_deleted IS NULL) ORDER BY id DESC").all(clinicId);
+        }
+        catch (e) {
+            console.error('[staff:get-all] Error:', e);
+            return [];
+        }
+    });
     // --- Services ---
-    electron_1.ipcMain.handle('services:getAll', () => db.prepare('SELECT * FROM services ORDER BY name ASC').all());
+    ipcMain.handle('services:getAll', () => {
+        try {
+            const clinicId = getCurrentClinicId();
+            // User requested filtering by is_deleted=0
+            const rows = getDb().prepare("SELECT * FROM services WHERE (clinic_id = ? OR clinic_id = 'clinic_001') AND (is_deleted IS NULL OR is_deleted = 0) ORDER BY name ASC").all(clinicId);
+            return rows;
+        }
+        catch (e) {
+            console.error('[services:getAll] Error:', e);
+            return [];
+        }
+    });
     // --- Cities ---
-    electron_1.ipcMain.handle('cities:getAll', () => db.prepare('SELECT * FROM cities ORDER BY name ASC').all());
+    ipcMain.handle('cities:getAll', () => {
+        try {
+            const clinicId = getCurrentClinicId();
+            // Filter by clinic_id (strict) and is_deleted=0
+            const rows = getDb().prepare("SELECT * FROM cities WHERE clinic_id = ? AND (is_deleted IS NULL OR is_deleted = 0) ORDER BY name ASC").all(clinicId);
+            return rows;
+        }
+        catch (e) {
+            console.error('[cities:getAll] Error:', e);
+            return [];
+        }
+    });
+    // --- Settings (Clinic Info) --- 
+    // --- Settings (Clinic Info) --- 
+    ipcMain.handle('settings:getClinicInfo', () => {
+        try {
+            const clinicId = getCurrentClinicId();
+            // Prioritize 'clinic_settings' because that's where the user saves data
+            // Attempt to get by ID
+            let info = getDb().prepare('SELECT * FROM clinic_settings WHERE id = ?').get(clinicId);
+            if (!info) {
+                // Fallback: If ID mismatch or single tenant, just get the one row
+                info = getDb().prepare('SELECT * FROM clinic_settings LIMIT 1').get();
+            }
+            if (info) {
+                // Return normalized data structure
+                return {
+                    data: {
+                        id: info.id || clinicId,
+                        clinic_name: info.clinic_name,
+                        owner_name: info.owner_name,
+                        phone: info.phone,
+                        address: info.address,
+                        email: info.email, // might be null
+                        whatsapp_number: info.whatsapp_number,
+                        currency: info.currency,
+                        clinic_logo: info.clinic_logo
+                    },
+                    error: null
+                };
+            }
+            // If absolutely nothing in clinic_settings, try clinics table as last resort
+            // ... (legacy logic omitted for simplicity unless requested)
+            return { data: null, error: 'No clinic settings found' };
+        }
+        catch (error) {
+            console.error('[settings:getClinicInfo] Error:', error);
+            return { data: null, error: error.message };
+        }
+    });
+    ipcMain.handle('settings:save-clinic-info', (_, data) => {
+        checkReadOnly();
+        try {
+            console.log('[settings:save-clinic-info] Receiving:', {
+                name: data.name,
+                hasLogo: !!data.logo,
+                logoLength: data.logo?.length
+            });
+            const existing = getDb().prepare('SELECT id FROM clinic_settings LIMIT 1').get();
+            if (existing) {
+                const stmt = getDb().prepare(`
+                    UPDATE clinic_settings 
+                    SET clinic_name = @name,
+                        owner_name = @ownerName,
+                        phone = @phone,
+                        whatsapp_number = @whatsappNumber,
+                        address = @address,
+                        clinic_logo = @logo,
+                        currency = @currency,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = @id
+                `);
+                const res = stmt.run({
+                    name: data.name,
+                    ownerName: data.ownerName,
+                    phone: data.phone,
+                    whatsappNumber: data.whatsappNumber || data.whatsapp,
+                    address: data.address,
+                    logo: data.logo,
+                    currency: data.currency,
+                    id: existing.id
+                });
+                console.log('[settings:save-clinic-info] Update result:', res.changes);
+                return { success: res.changes > 0 };
+            }
+            else {
+                // Insert new if missing
+                const newId = randomUUID();
+                console.log('[settings:save-clinic-info] No settings found. Inserting new row:', newId);
+                const stmt = getDb().prepare(`
+                    INSERT INTO clinic_settings (id, clinic_name, owner_name, phone, whatsapp_number, address, clinic_logo, currency, is_setup_completed)
+                    VALUES (@id, @name, @ownerName, @phone, @whatsappNumber, @address, @logo, @currency, 1)
+                `);
+                stmt.run({
+                    id: newId,
+                    name: data.name,
+                    ownerName: data.ownerName,
+                    phone: data.phone,
+                    whatsappNumber: data.whatsappNumber || data.whatsapp,
+                    address: data.address,
+                    logo: data.logo,
+                    currency: data.currency
+                });
+                return { success: true };
+            }
+        }
+        catch (error) {
+            console.error('Save Clinic Info Error:', error);
+            return { success: false, error: error.message };
+        }
+    });
+    ipcMain.handle('settings:syncClinicInfo', (_, settings) => {
+        checkReadOnly();
+        try {
+            const existing = getDb().prepare('SELECT id FROM clinic_settings LIMIT 1').get();
+            if (existing) {
+                const stmt = getDb().prepare(`
+                    UPDATE clinic_settings 
+                    SET 
+                        clinic_name = @name,
+                        owner_name = @ownerName,
+                        address = @address,
+                        phone = @phone,
+                        whatsapp_number = @whatsappNumber,
+                        email = @email,
+                        clinic_logo = @logo,
+                        currency = @currency,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = @id
+                `);
+                stmt.run({
+                    ...settings,
+                    id: existing.id
+                });
+            }
+            else {
+                const stmt = getDb().prepare(`
+                    INSERT INTO clinic_settings (id, clinic_name, owner_name, address, phone, whatsapp_number, email, clinic_logo, currency)
+                    VALUES (@id, @name, @ownerName, @address, @phone, @whatsappNumber, @email, @logo, @currency)
+                `);
+                stmt.run({
+                    ...settings,
+                    id: settings.id || randomUUID()
+                });
+            }
+            return { success: true };
+        }
+        catch (error) {
+            console.error('Settings Sync Error:', error);
+            return { success: false, error: error.message };
+        }
+    });
     // generic insert helper for other tables to save code space
-    electron_1.ipcMain.handle('db:insert', (_, { table, data }) => {
-        const id = (0, crypto_1.randomUUID)();
-        const keys = Object.keys(data);
-        const values = Object.values(data);
+    ipcMain.handle('db:insert', (_, { table, data }) => {
+        checkReadOnly();
+        const id = randomUUID();
+        // AUTO-INJECT CLINIC_ID Logic
+        // Trusted tables that require clinic_id
+        const domainTables = ['cities', 'services', 'doctors', 'staff', 'appointments', 'invoices', 'treatment_cases', 'patients'];
+        let finalData = { ...data };
+        if (domainTables.includes(table)) {
+            try {
+                const clinicId = getCurrentClinicId();
+                if (!clinicId)
+                    throw new Error('Clinic ID not found');
+                // Force overwrite/inject
+                finalData['clinic_id'] = clinicId;
+                console.log(`[db:insert] Injecting clinic_id=${clinicId} into ${table}`);
+            }
+            catch (e) {
+                console.error(`[db:insert] Failed to inject clinic_id for ${table}:`, e);
+                return { data: null, error: 'Database Context Error: ' + e.message };
+            }
+        }
+        const keys = Object.keys(finalData);
+        const values = Object.values(finalData);
         const placeholders = keys.map(() => '?');
         const cols = ['id', ...keys].join(',');
         const vals = [id, ...values];
         const phs = ['?', ...placeholders].join(',');
         try {
-            db.prepare(`INSERT INTO ${table} (${cols}) VALUES (${phs})`).run(...vals);
-            return { data: { ...data, id }, error: null };
+            getDb().prepare(`INSERT INTO ${table} (${cols}) VALUES (${phs})`).run(...vals);
+            return { data: { ...finalData, id }, error: null };
         }
         catch (err) {
+            console.error('[db:insert] Insert Error:', err);
             return { data: null, error: err.message };
         }
     });
     // generic update helper
-    electron_1.ipcMain.handle('db:update', (_, { table, id, data }) => {
+    ipcMain.handle('db:update', (_, { table, id, data }) => {
+        checkReadOnly();
         const keys = Object.keys(data);
         const values = Object.values(data);
         const setClause = keys.map(k => `${k} = ?`).join(',');
         const vals = [...values, id];
         try {
-            db.prepare(`UPDATE ${table} SET ${setClause}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...vals);
+            getDb().prepare(`UPDATE ${table} SET ${setClause}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...vals);
             return { data: { ...data, id }, error: null };
         }
         catch (err) {
@@ -276,9 +600,10 @@ function registerHandlers() {
         }
     });
     // generic delete helper
-    electron_1.ipcMain.handle('db:delete', (_, { table, id }) => {
+    ipcMain.handle('db:delete', (_, { table, id }) => {
+        checkReadOnly();
         try {
-            db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
+            getDb().prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
             return { data: true, error: null };
         }
         catch (err) {
@@ -286,9 +611,9 @@ function registerHandlers() {
         }
     });
     // generic SQL query
-    electron_1.ipcMain.handle('db:query', (_, { sql, params = [] }) => {
+    ipcMain.handle('db:query', (_, { sql, params = [] }) => {
         try {
-            return db.prepare(sql).all(...params);
+            return getDb().prepare(sql).all(...params);
         }
         catch (err) {
             console.error(err);
@@ -296,28 +621,40 @@ function registerHandlers() {
         }
     });
     // --- Specific Queries if needed ---
-    electron_1.ipcMain.handle('dashboard:stats', () => {
-        const totalPatients = db.prepare('SELECT COUNT(*) as count FROM patients').get();
-        const totalAppointments = db.prepare('SELECT COUNT(*) as count FROM appointments').get();
-        const todayAppointments = db.prepare('SELECT COUNT(*) as count FROM appointments WHERE date = CURRENT_DATE').get();
+    // --- Specific Queries if needed ---
+    ipcMain.handle('dashboard:stats', (_, data) => {
+        const ctx = getContext();
+        const effectiveClinicId = (data && data.clinicId) || ctx?.clinicId;
+        // Return zeros if no context context
+        if (!effectiveClinicId)
+            return {
+                totalPatients: 0,
+                totalAppointments: 0,
+                todayAppointments: 0
+            };
+        const totalPatients = getDb().prepare("SELECT COUNT(*) as count FROM patients WHERE (clinic_id = ? OR clinic_id = 'clinic_001')").get(effectiveClinicId);
+        const totalAppointments = getDb().prepare("SELECT COUNT(*) as count FROM appointments WHERE (clinic_id = ? OR clinic_id = 'clinic_001')").get(effectiveClinicId);
+        const todayAppointments = getDb().prepare("SELECT COUNT(*) as count FROM appointments WHERE date = CURRENT_DATE AND (clinic_id = ? OR clinic_id = 'clinic_001')").get(effectiveClinicId);
         return {
             totalPatients: totalPatients.count,
             totalAppointments: totalAppointments.count,
             todayAppointments: todayAppointments.count
         };
     });
-    electron_1.ipcMain.handle('treatment_cases:recalculate', () => {
+    ipcMain.handle('treatment_cases:recalculate', () => {
         try {
-            const cases = db.prepare('SELECT id, total_cost FROM treatment_cases').all();
+            const cases = getDb().prepare('SELECT id, total_cost FROM treatment_cases').all();
             let updatedCount = 0;
-            const transaction = db.transaction((allCases) => {
+            const transaction = getDb().transaction((allCases) => {
                 for (const c of allCases) {
-                    const sumResult = db.prepare('SELECT SUM(paid_amount) as total FROM invoices WHERE treatment_case_id = ?').get(c.id);
+                    const sumResult = getDb().prepare('SELECT SUM(paid_amount) as total FROM invoices WHERE treatment_case_id = ?').get(c.id);
                     const grandTotalPaid = sumResult?.total || 0;
                     const balance = (c.total_cost || 0) - grandTotalPaid;
                     // Allow small float margin
                     const status = balance <= 1.0 ? 'closed' : 'active';
-                    db.prepare(`
+                    // Re-evaluate without owner_email check as strict ID lookup is safe, 
+                    // but we should ideally update updated_at
+                    getDb().prepare(`
                         UPDATE treatment_cases 
                         SET total_paid = ?, balance = ?, status = ?, updated_at = CURRENT_TIMESTAMP
                         WHERE id = ?
@@ -333,28 +670,33 @@ function registerHandlers() {
         }
     });
     // --- Reports ---
-    electron_1.ipcMain.handle('reports:daily', (_, { date }) => {
+    // --- Reports ---
+    // --- Reports ---
+    ipcMain.handle('reports:daily', (_, data) => {
+        const ctx = getContext();
+        const effectiveClinicId = (data && data.clinicId) || ctx?.clinicId;
+        const date = data.date;
+        if (!effectiveClinicId)
+            return { totalRevenue: 0, patientCount: 0, completedAppointments: 0 };
         try {
             // 1. Total Revenue (Sum of paid_amount in invoices created ON that date)
-            // Note: Invoices have created_at as DATETIME. 
-            // We use date(created_at) = date to filter.
-            const revenueResult = db.prepare(`
+            const revenueResult = getDb().prepare(`
                 SELECT SUM(paid_amount) as total 
                 FROM invoices 
-                WHERE date(created_at) = ?
-            `).get(date);
+                WHERE date(created_at) = ? AND (clinic_id = ? OR clinic_id = 'clinic_001')
+            `).get(date, effectiveClinicId);
             // 2. Patient Count (Distinct patients who had appointments today)
-            const patientsResult = db.prepare(`
+            const patientsResult = getDb().prepare(`
                 SELECT COUNT(DISTINCT patient_id) as count 
                 FROM appointments 
-                WHERE date = ?
-            `).get(date);
+                WHERE date = ? AND (clinic_id = ? OR clinic_id = 'clinic_001')
+            `).get(date, effectiveClinicId);
             // 3. Completed Appointments (Status = 'attended' or 'completed')
-            const completedResult = db.prepare(`
+            const completedResult = getDb().prepare(`
                 SELECT COUNT(*) as count 
                 FROM appointments 
-                WHERE date = ? AND (status = 'attended' OR status = 'completed')
-            `).get(date);
+                WHERE date = ? AND (status = 'attended' OR status = 'completed') AND (clinic_id = ? OR clinic_id = 'clinic_001')
+            `).get(date, effectiveClinicId);
             return {
                 totalRevenue: revenueResult?.total || 0,
                 patientCount: patientsResult?.count || 0,
@@ -367,86 +709,76 @@ function registerHandlers() {
         }
     });
     // --- Complex Actions ---
-    electron_1.ipcMain.handle('appointments:markAttended', (_, payload) => {
-        console.log('IPC: appointments:markAttended received:', payload);
-        const { appointmentId, treatmentCaseId, serviceName, cost, amountPaid, doctorId, newCaseName } = payload;
+    ipcMain.handle('appointments:markAttended', (_, payload) => {
+        checkReadOnly();
+        const ctx = getContext();
+        // Resolve clinic_id: from payload (if added in frontend) or context helper
+        // Assuming payload doesn't have it yet, we fallback to context.
+        const clinicId = ctx?.clinicId;
+        if (!clinicId)
+            throw new Error('Action failed: Missing clinic context');
+        const { appointmentId, treatmentCaseId, serviceName, cost, amountPaid, doctorId, newCaseName, } = payload;
         try {
-            const result = db.transaction(() => {
+            const result = getDb().transaction(() => {
                 // 1. Get Appointment
-                const appointment = db.prepare('SELECT * FROM appointments WHERE id = ?').get(appointmentId);
+                const appointment = getDb().prepare("SELECT * FROM appointments WHERE id = ? AND (clinic_id = ? OR clinic_id = 'clinic_001')").get(appointmentId, clinicId);
                 if (!appointment)
-                    throw new Error('Appointment not found');
+                    throw new Error('Appointment not found or access denied');
                 // 2. Check Invoice
-                const existingInvoice = db.prepare('SELECT * FROM invoices WHERE appointment_id = ?').get(appointmentId);
+                const existingInvoice = getDb().prepare('SELECT * FROM invoices WHERE appointment_id = ?').get(appointmentId);
                 if (existingInvoice)
                     throw new Error('Invoice already exists for this appointment');
                 // 3. Handle Treatment Case
                 let resolvedTCaseId = treatmentCaseId;
                 if (treatmentCaseId === 'new') {
-                    resolvedTCaseId = (0, crypto_1.randomUUID)();
-                    const patient = db.prepare('SELECT full_name FROM patients WHERE id = ?').get(appointment.patient_id);
+                    resolvedTCaseId = randomUUID();
+                    const patient = getDb().prepare('SELECT full_name FROM patients WHERE id = ?').get(appointment.patient_id);
                     const pName = patient ? patient.full_name : 'Unknown';
                     const bal = cost - amountPaid;
                     // Get next display_id
-                    const maxCaseId = db.prepare('SELECT MAX(display_id) as max FROM treatment_cases').get()?.max || 0;
+                    const maxCaseId = getDb().prepare('SELECT MAX(display_id) as max FROM treatment_cases').get()?.max || 0;
                     const caseDisplayId = maxCaseId + 1;
-                    db.prepare(`
-                        INSERT INTO treatment_cases (id, display_id, patient_id, patient_name, name, total_cost, total_paid, balance, status)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    `).run(resolvedTCaseId, caseDisplayId, appointment.patient_id, pName, newCaseName || serviceName, cost, amountPaid, bal, 'active');
+                    getDb().prepare(`
+                        INSERT INTO treatment_cases (id, display_id, clinic_id, patient_id, patient_name, name, total_cost, total_paid, balance, status, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    `).run(resolvedTCaseId, caseDisplayId, clinicId, appointment.patient_id, pName, newCaseName || serviceName, cost, amountPaid, bal, 'active');
                 }
                 else {
-                    const tCase = db.prepare('SELECT * FROM treatment_cases WHERE id = ?').get(treatmentCaseId);
+                    const tCase = getDb().prepare('SELECT * FROM treatment_cases WHERE id = ?').get(treatmentCaseId);
                     if (!tCase)
                         throw new Error('Treatment case not found');
-                    // We don't update here anymore, we update AFTER invoice insertion using the sum query
                 }
                 const tCaseId = resolvedTCaseId;
                 // 4. Create Invoice
-                const invId = (0, crypto_1.randomUUID)();
+                const invId = randomUUID();
                 const isExisting = treatmentCaseId !== 'new';
-                // If it's an existing case, the cost of THIS session is usually 0 in terms of adding to the total plan cost,
-                // because the plan cost was fixed. But we are paying off the plan. 
-                // However, the invoice needs to record what was paid.
-                // Standard logic: Invoice Amount = Paid Amount (for installments) OR standard service price?
-                // For this use case (Installments): Invoice Amount = Paid Amount (so it looks fully paid)
-                // OR Invoice Amount = Cost Remaining? 
-                // Let's stick to: Amount = what user entered as Cost (if new) or Paid (if existing)?
-                // Actually, for existing plans, usually we just record a "Payment". 
-                // But the user interface sends "cost" as 0 for existing.
                 const invCost = isExisting ? amountPaid : cost;
-                // If existing, we say invoice amount is exactly what they paid, so it's a "Receipt". 
-                // If new, it's the full service cost (Cost), and they paid (AmountPaid), causing debt.
                 const invBal = isExisting ? 0 : (cost - amountPaid);
                 const invStatus = invBal > 0 ? 'pending' : 'paid';
-                // Get next display_id
-                const maxInvId = db.prepare('SELECT MAX(display_id) as max FROM invoices').get()?.max || 0;
+                const maxInvId = getDb().prepare('SELECT MAX(display_id) as max FROM invoices').get()?.max || 0;
                 const invDisplayId = maxInvId + 1;
-                db.prepare(`
-                    INSERT INTO invoices (id, display_id, appointment_id, patient_id, doctor_id, service_id, treatment_case_id, amount, paid_amount, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                `).run(invId, invDisplayId, appointmentId, appointment.patient_id, doctorId, appointment.service_id, tCaseId, invCost, amountPaid, invStatus);
+                getDb().prepare(`
+                    INSERT INTO invoices (id, display_id, clinic_id, appointment_id, patient_id, doctor_id, service_id, treatment_case_id, amount, paid_amount, status, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                `).run(invId, invDisplayId, clinicId, appointmentId, appointment.patient_id, doctorId, appointment.service_id, tCaseId, invCost, amountPaid, invStatus);
                 // 5. Update Treatment Case (Re-calculation Logic)
-                // We recalculate strictly from invoices to ensure synchronization
-                const sumResult = db.prepare('SELECT SUM(paid_amount) as total FROM invoices WHERE treatment_case_id = ?').get(tCaseId);
+                const sumResult = getDb().prepare('SELECT SUM(paid_amount) as total FROM invoices WHERE treatment_case_id = ?').get(tCaseId);
                 const grandTotalPaid = sumResult?.total || 0;
-                // Get the case again to be sure of total_cost (if we just inserted it, we could use vars, but safety first)
-                const currentCase = db.prepare('SELECT total_cost FROM treatment_cases WHERE id = ?').get(tCaseId);
+                const currentCase = getDb().prepare('SELECT total_cost FROM treatment_cases WHERE id = ?').get(tCaseId);
                 const caseTotalCost = currentCase?.total_cost || 0;
                 const caseBalance = caseTotalCost - grandTotalPaid;
                 const caseStatus = caseBalance <= 0 ? 'closed' : 'active';
-                db.prepare(`
+                getDb().prepare(`
                     UPDATE treatment_cases 
                     SET total_paid = ?, balance = ?, status = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                 `).run(grandTotalPaid, caseBalance, caseStatus, tCaseId);
                 // 6. Update Appointment
-                db.prepare(`
+                getDb().prepare(`
                     UPDATE appointments 
                     SET status = 'attended', treatment_case_id = ?, invoice_id = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                 `).run(tCaseId, invId, appointmentId);
-                console.log('IPC: markAttended success, returning object');
                 return { success: true, invoiceId: invId, treatmentCaseId: tCaseId };
             })();
             return result;
@@ -457,72 +789,91 @@ function registerHandlers() {
         }
     });
     // --- Detailed Reports ---
-    electron_1.ipcMain.handle('reports:doctors', (_, { from, to, doctorId }) => {
+    ipcMain.handle('reports:doctors', (_, data) => {
+        const ctx = getContext();
+        const effectiveClinicId = (data && data.clinicId) || ctx?.clinicId;
+        if (!effectiveClinicId)
+            return { invoices: [], appointments: [] };
+        const { from, to, doctorId } = data;
         try {
-            // Build Invoices Query
-            let invQuery = 'SELECT * FROM invoices WHERE date(created_at) BETWEEN ? AND ?';
-            const invParams = [from, to];
+            // Build Invoices Query - Filter by clinic_id
+            let invQuery = "SELECT * FROM invoices WHERE date(created_at) BETWEEN ? AND ? AND (clinic_id = ? OR clinic_id = 'clinic_001')";
+            const invParams = [from, to, effectiveClinicId];
             if (doctorId && doctorId !== 'all') {
                 invQuery += ' AND doctor_id = ?';
                 invParams.push(doctorId);
             }
-            const invoices = db.prepare(invQuery).all(...invParams);
-            // Build Appointments Query (Attended only)
-            // Note: Appointment doesn't have doctor_id directly usually, it has invoice_id -> invoice -> doctor_id?
-            // Or does appointment have doctor_id? Let's check schema usage in markAttended.
-            // In markAttended, we inserted doctorId into INVOICES.
-            // Appointments table structure (step 51): id, patient_id, date, time, status, notes, service_id, treatment_case_id, invoice_id...
-            // It does NOT seem to have doctor_id explicitly in provided snippets, but let's check.
-            // Actually, in `createAppointment`, we commented `// doctor_id?`.
-            // So we should filter appointments by filtering the linked INVOICES or just return all attended appointments in timeframe
-            // and let frontend map them?
-            // BETTER: Join with invoices?
-            // Or just return all attended in range, and frontend already does filtering.
-            // If the user selects "All Doctors", we want all attended appointments.
-            // If specific doctor, we want appointments linked to invoices of that doctor.
+            const invoices = getDb().prepare(invQuery).all(...invParams);
+            // Build Appointments Query 
+            // Join invoices to allow filtering by doctor if needed, but primarily filter by clinic_id
             let aptQuery = `
                 SELECT a.* 
                 FROM appointments a
                 LEFT JOIN invoices i ON a.invoice_id = i.id
-                WHERE a.status = 'attended' AND a.date BETWEEN ? AND ?
+                WHERE a.status = 'attended' AND a.date BETWEEN ? AND ? AND (a.clinic_id = ? OR a.clinic_id = 'clinic_001')
             `;
-            const aptParams = [from, to];
+            const aptParams = [from, to, effectiveClinicId];
             if (doctorId && doctorId !== 'all') {
                 aptQuery += ' AND i.doctor_id = ?';
                 aptParams.push(doctorId);
             }
-            const appointments = db.prepare(aptQuery).all(...aptParams);
+            const appointments = getDb().prepare(aptQuery).all(...aptParams);
             return { invoices, appointments };
         }
         catch (err) {
-            console.error('Report Error:', err);
+            console.error('Reports Doctors Error:', err);
             return { invoices: [], appointments: [], error: err.message };
         }
     });
     // --- Invoices ---
-    electron_1.ipcMain.handle('invoices:delete', (_, { id }) => {
+    ipcMain.handle('invoices:getAll', () => {
         try {
-            const result = db.transaction(() => {
+            const clinicId = getCurrentClinicId();
+            // Join with treatment_cases and services to get service name
+            const rows = getDb().prepare(`
+                SELECT i.*, 
+                       tc.name as plan_name, 
+                       s.name as service_item_name
+                FROM invoices i
+                LEFT JOIN treatment_cases tc ON i.treatment_case_id = tc.id
+                LEFT JOIN services s ON i.service_id = s.id
+                WHERE (i.clinic_id = ? OR i.clinic_id = 'clinic_001')
+                ORDER BY i.created_at DESC
+            `).all(clinicId);
+            return rows.map((row) => ({
+                ...row,
+                service_name: row.plan_name || row.service_item_name
+            }));
+        }
+        catch (e) {
+            console.error('[invoices:getAll] Error:', e);
+            return [];
+        }
+    });
+    ipcMain.handle('invoices:delete', (_, { id }) => {
+        checkReadOnly();
+        try {
+            const result = getDb().transaction(() => {
                 // 1. Get Invoice Details
-                const invoice = db.prepare('SELECT * FROM invoices WHERE id = ?').get(id);
+                const invoice = getDb().prepare('SELECT * FROM invoices WHERE id = ?').get(id);
                 if (!invoice)
                     return { success: true }; // Already gone
                 const tCaseId = invoice.treatment_case_id;
                 // 2. Cascade Delete Appointment (if linked)
-                db.prepare('DELETE FROM appointments WHERE invoice_id = ?').run(id);
+                getDb().prepare('DELETE FROM appointments WHERE invoice_id = ?').run(id);
                 // 3. Delete Invoice
-                db.prepare('DELETE FROM invoices WHERE id = ?').run(id);
+                getDb().prepare('DELETE FROM invoices WHERE id = ?').run(id);
                 // 3. Sync Treatment Case (if exists)
                 if (tCaseId) {
-                    const sumResult = db.prepare('SELECT SUM(paid_amount) as total FROM invoices WHERE treatment_case_id = ?').get(tCaseId);
+                    const sumResult = getDb().prepare('SELECT SUM(paid_amount) as total FROM invoices WHERE treatment_case_id = ?').get(tCaseId);
                     const grandTotalPaid = sumResult?.total || 0;
-                    const currentCase = db.prepare('SELECT total_cost FROM treatment_cases WHERE id = ?').get(tCaseId);
+                    const currentCase = getDb().prepare('SELECT total_cost FROM treatment_cases WHERE id = ?').get(tCaseId);
                     if (currentCase) {
                         const caseTotalCost = currentCase.total_cost || 0;
                         const caseBalance = caseTotalCost - grandTotalPaid;
                         // Re-evaluate status: if balance > small margin, it's active again
                         const caseStatus = caseBalance <= 1.0 ? 'closed' : 'active';
-                        db.prepare(`
+                        getDb().prepare(`
                             UPDATE treatment_cases 
                             SET total_paid = ?, balance = ?, status = ?, updated_at = CURRENT_TIMESTAMP
                             WHERE id = ?
@@ -539,40 +890,73 @@ function registerHandlers() {
         }
     });
     // --- Treatment Cases ---
-    electron_1.ipcMain.handle('treatment_cases:create', (_, data) => {
-        const id = (0, crypto_1.randomUUID)();
+    ipcMain.handle('treatment_cases:getAll', () => {
         try {
+            const clinicId = getCurrentClinicId();
+            return getDb().prepare("SELECT * FROM treatment_cases WHERE (clinic_id = ? OR clinic_id = 'clinic_001') ORDER BY created_at DESC").all(clinicId);
+        }
+        catch (e) {
+            console.error('[treatment_cases:getAll] Error:', e);
+            return [];
+        }
+    });
+    ipcMain.handle('treatment_cases:create', (_, data) => {
+        checkReadOnly();
+        const id = randomUUID();
+        try {
+            const clinicId = getCurrentClinicId(); // Inject clinic_id
             // Get next display_id
-            const maxId = db.prepare('SELECT MAX(display_id) as max FROM treatment_cases').get()?.max || 0;
+            const maxId = getDb().prepare('SELECT MAX(display_id) as max FROM treatment_cases').get()?.max || 0;
             const displayId = maxId + 1;
-            db.prepare(`
-                INSERT INTO treatment_cases (id, display_id, patient_id, patient_name, name, total_cost, total_paid, balance, status, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            `).run(id, displayId, data.patientId, data.patientName, data.name, data.totalCost, 0, // Initial paid
+            getDb().prepare(`
+                INSERT INTO treatment_cases (id, display_id, clinic_id, patient_id, patient_name, name, total_cost, total_paid, balance, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            `).run(id, displayId, clinicId, data.patientId, data.patientName, data.name, data.totalCost, 0, // Initial paid
             data.totalCost, // Initial balance = cost
             'active');
-            return { data: { ...data, id }, error: null };
+            return { data: { ...data, id, clinicId }, error: null };
         }
         catch (err) {
             return { data: null, error: err.message };
         }
     });
-    electron_1.ipcMain.handle('treatment_cases:delete', (_, { id }) => {
+    ipcMain.handle('treatment_cases:delete', (_, { id }) => {
         try {
             // Optional: Check or delete linked invoices/appointments?
             // For now, let's keep it simple: just delete the case.
             // Foreign keys might cascade if set up, otherwise orphans remain.
             // Given this is a simple schema, we'll just delete the case row.
-            db.prepare('DELETE FROM treatment_cases WHERE id = ?').run(id);
+            getDb().prepare('DELETE FROM treatment_cases WHERE id = ?').run(id);
             return { success: true };
         }
         catch (err) {
             return { success: false, error: err.message };
         }
     });
-    electron_1.ipcMain.handle('treatment_cases:getActiveDetails', () => {
+    ipcMain.handle('treatment_cases:getByPatient', (_, { patientId }) => {
         try {
-            return db.prepare(`
+            const clinicId = getCurrentClinicId();
+            // Fetch active cases for specific patient
+            // Also ensuring strictly active and balance > 0 (as per user request "remaining_amount > 0")
+            // Actually user request said "remaining_amount > 0".
+            // My default 'active' logic usually implies balance > 1.0 (float tolerance). 
+            // I'll check 'active' AND 'balance > 0' just to be safe.
+            return getDb().prepare(`
+                SELECT * FROM treatment_cases 
+                WHERE (clinic_id = ? OR clinic_id = 'clinic_001') AND patient_id = ? 
+                AND status = 'active' AND balance > 0
+                ORDER BY created_at DESC
+            `).all(clinicId, patientId);
+        }
+        catch (err) {
+            console.error('Error fetching patient cases:', err);
+            return [];
+        }
+    });
+    ipcMain.handle('treatment_cases:getActiveDetails', () => {
+        try {
+            const clinicId = getCurrentClinicId();
+            return getDb().prepare(`
                 SELECT 
                     tp.id, 
                     tp.name as plan_name, 
@@ -582,9 +966,9 @@ function registerHandlers() {
                     p.full_name as patient_name
                 FROM treatment_cases tp
                 JOIN patients p ON tp.patient_id = p.id
-                WHERE tp.status = 'active'
+                WHERE tp.status = 'active' AND (tp.clinic_id = ? OR tp.clinic_id = 'clinic_001')
                 ORDER BY remaining DESC
-            `).all();
+            `).all(clinicId);
         }
         catch (err) {
             console.error('Error fetching active plans:', err);
@@ -592,16 +976,16 @@ function registerHandlers() {
         }
     });
     // --- Backup & Restore ---
-    electron_1.ipcMain.handle('database:backup', async () => {
+    ipcMain.handle('database:backup', async () => {
         try {
-            const userDataPath = electron_1.app.getPath('userData');
-            const sourcePath = path_1.default.join(userDataPath, 'dental-flow.db');
+            const userDataPath = app.getPath('userData');
+            const sourcePath = path.join(userDataPath, 'dental-flow.db');
             if (!fs.existsSync(sourcePath)) {
                 return { success: false, error: 'Database file not found.' };
             }
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
             const defaultFilename = `backup_dental_flow_${timestamp}.db`;
-            const { canceled, filePath } = await electron_1.dialog.showSaveDialog({
+            const { canceled, filePath } = await dialog.showSaveDialog({
                 title: 'حفظ نسخة احتياطية',
                 defaultPath: defaultFilename,
                 filters: [{ name: 'Database Files', extensions: ['db', 'sqlite'] }]
@@ -616,46 +1000,57 @@ function registerHandlers() {
             return { success: false, error: error.message };
         }
     });
-    electron_1.ipcMain.handle('database:restore', async () => {
+    ipcMain.handle('database:restore', async () => {
         try {
             // 1. Select Backup File
-            const { canceled, filePaths } = await electron_1.dialog.showOpenDialog({
+            const { canceled, filePaths } = await dialog.showOpenDialog({
                 title: 'استعادة نسخة احتياطية',
-                filters: [{ name: 'Database Files', extensions: ['db', 'sqlite'] }],
+                filters: [{ name: 'Backup/Database Files', extensions: ['zip', 'db', 'sqlite'] }],
                 properties: ['openFile']
             });
             if (canceled || filePaths.length === 0)
                 return { success: false, reason: 'canceled' };
             const sourcePath = filePaths[0];
             // 2. Safety Backup of Current DB
-            const userDataPath = electron_1.app.getPath('userData');
-            const currentDbPath = path_1.default.join(userDataPath, 'dental-flow.db');
+            const userDataPath = app.getPath('userData');
+            const currentDbPath = path.join(userDataPath, 'dental-flow.db');
             if (fs.existsSync(currentDbPath)) {
                 const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-                const tempBackup = path_1.default.join(userDataPath, `pre_restore_backup_${timestamp}.db`);
-                fs.copyFileSync(currentDbPath, tempBackup);
-                console.log('Safety backup created at:', tempBackup);
+                const tempBackup = path.join(userDataPath, `pre_restore_backup_${timestamp}.db`);
+                try {
+                    fs.copyFileSync(currentDbPath, tempBackup);
+                    console.log('Safety backup created at:', tempBackup);
+                }
+                catch (e) {
+                    console.error('Safety backup failed (non-fatal):', e);
+                }
             }
-            // 3. Overwrite DB
-            try {
-                fs.copyFileSync(sourcePath, currentDbPath);
+            // 3. Close Active Connection
+            closeConnection();
+            // 4. Perform Restore (Smart: Handles .zip or .db)
+            const result = await backupService.restoreFromLocalFile(sourcePath);
+            if (result.success) {
+                // Reply to UI FIRST, then restart
+                setTimeout(() => {
+                    app.relaunch();
+                    app.exit(0);
+                }, 1500);
             }
-            catch (e) {
-                return { success: false, error: `Could not overwrite database: ${e.message}. Application might need restart first.` };
+            else {
+                // If failed, try to reopen?
+                initializeDatabase();
             }
-            // 4. Restart App
-            electron_1.app.relaunch();
-            electron_1.app.exit();
-            return { success: true };
+            return result;
         }
         catch (error) {
             console.error('Restore Error:', error);
+            initializeDatabase();
             return { success: false, error: error.message };
         }
     });
     // --- Smart Import ---
     // --- Smart Import Headers ---
-    electron_1.ipcMain.handle('patients:getExcelHeaders', async (_, { filePath }) => {
+    ipcMain.handle('patients:getExcelHeaders', async (_, { filePath }) => {
         try {
             if (!filePath || !fs.existsSync(filePath)) {
                 return { success: false, error: 'File not found' };
@@ -673,8 +1068,9 @@ function registerHandlers() {
         }
     });
     // --- Smart Import ---
-    electron_1.ipcMain.handle('patients:smartImport', async (_, { filePath, mapping }) => {
+    ipcMain.handle('patients:smartImport', async (_, { filePath, mapping }) => {
         try {
+            const clinicId = getCurrentClinicId();
             // mapping: { dbField: excelHeader }
             // e.g. { full_name: 'Patient Name', phone: 'Mobile No', ... }
             if (!filePath || !fs.existsSync(filePath)) {
@@ -689,19 +1085,19 @@ function registerHandlers() {
             const errors = [];
             // Prepare statements
             // Get max display_id
-            let maxId = db.prepare('SELECT MAX(display_id) as max FROM patients').get()?.max || 0;
-            const insertStmt = db.prepare(`
+            let maxId = getDb().prepare('SELECT MAX(display_id) as max FROM patients').get()?.max || 0;
+            const insertStmt = getDb().prepare(`
                 INSERT INTO patients (id, display_id, full_name, phone, gender, age, notes, city_id, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
              `);
             // We need to resolve city name to city_id if mapped
             const cityMap = new Map(); // name -> id
-            db.prepare('SELECT id, name FROM cities').all().forEach((c) => cityMap.set(c.name, c.id));
+            getDb().prepare("SELECT id, name FROM cities WHERE clinic_id = ? OR clinic_id = 'clinic_001'").all(clinicId).forEach((c) => cityMap.set(c.name, c.id));
             // Helper for Gender
             const genderMap = {
                 'ذكر': 'male', 'أنثى': 'female', 'انثى': 'female', 'male': 'male', 'female': 'female', 'm': 'male', 'f': 'female'
             };
-            const transaction = db.transaction((rows) => {
+            const transaction = getDb().transaction((rows) => {
                 for (const row of rows) {
                     // 1. Extract values using mapping
                     // mapping keys are our DB fields: full_name, phone, gender, age, city, notes
@@ -718,7 +1114,7 @@ function registerHandlers() {
                         continue;
                     }
                     // Check duplicates
-                    const existing = db.prepare('SELECT id FROM patients WHERE phone = ?').get(phone);
+                    const existing = getDb().prepare("SELECT id FROM patients WHERE phone = ? AND (clinic_id = ? OR clinic_id = 'clinic_001')").get(phone, clinicId);
                     if (existing) {
                         // Skip duplicate
                         continue;
@@ -735,9 +1131,9 @@ function registerHandlers() {
                         }
                         else {
                             // Auto-Create for better UX
-                            const newCityId = (0, crypto_1.randomUUID)();
+                            const newCityId = randomUUID();
                             try {
-                                db.prepare('INSERT INTO cities (id, name) VALUES (?, ?)').run(newCityId, rawCity);
+                                getDb().prepare("INSERT INTO cities (id, name, clinic_id) VALUES (?, ?, ?)").run(newCityId, rawCity, clinicId);
                                 cityMap.set(rawCity, newCityId);
                                 cityId = newCityId;
                             }
@@ -750,7 +1146,7 @@ function registerHandlers() {
                     const notes = row[notesHeader] || '';
                     maxId++;
                     try {
-                        insertStmt.run((0, crypto_1.randomUUID)(), maxId, name, phone, gender, age, notes, cityId);
+                        insertStmt.run(randomUUID(), maxId, name, phone, gender, age, notes, cityId);
                         successCount++;
                     }
                     catch (e) {
@@ -765,6 +1161,253 @@ function registerHandlers() {
         catch (error) {
             console.error('Smart Import Error:', error);
             return { successCount: 0, failedCount: 0, errors: [error.message] };
+        }
+    });
+    // --- Backup & Restore ---
+    ipcMain.handle('backup:authenticate', async () => {
+        try {
+            return await googleDriveService.isAuthenticated();
+        }
+        catch (error) {
+            console.error('Auth Check Error:', error);
+            return false;
+        }
+    });
+    ipcMain.handle('backup:start-auth', async () => {
+        try {
+            return await googleDriveService.startAuthFlow();
+        }
+        catch (error) {
+            console.error('Start Auth Error:', error);
+            throw new Error(error.message);
+        }
+    });
+    ipcMain.handle('backup:get-user', async () => {
+        try {
+            return await googleDriveService.getUserInfo();
+        }
+        catch (error) {
+            console.error('Get User Info Error:', error);
+            return null;
+        }
+    });
+    ipcMain.handle('backup:run', async (_, { password } = {}) => {
+        try {
+            console.log('Main: Starting backup (Local Only)...');
+            return await backupService.performBackup({ password, mode: 'local' });
+        }
+        catch (error) {
+            console.error('Backup Run Error:', error);
+            return { success: false, error: error.message };
+        }
+    });
+    // Alias for consistency with user request (Default to Local Only)
+    ipcMain.handle('backup:create', async (_, { password } = {}) => {
+        try {
+            console.log('Main: Starting backup (Local)...');
+            return await backupService.performBackup({ password, mode: 'local' });
+        }
+        catch (error) {
+            console.error('Backup Create Error:', error);
+            return { success: false, error: error.message };
+        }
+    });
+    ipcMain.handle('backup:get-local-path', () => {
+        return backupService.getLocalPath();
+    });
+    ipcMain.handle('backup:set-local-path', async () => {
+        const result = await dialog.showOpenDialog({
+            properties: ['openDirectory'],
+            title: 'Select Backup Folder'
+        });
+        if (!result.canceled && result.filePaths.length > 0) {
+            const p = result.filePaths[0];
+            backupService.setLocalPath(p);
+            return p;
+        }
+        return null;
+    });
+    ipcMain.handle('backup:restore', async (_, args) => {
+        try {
+            // Get active DB path safely without depending on getDb() (which crashes if corrupt)
+            const activeDbPath = path.join(app.getPath('userData'), 'dental.db');
+            let currentUserEmail = args?.email;
+            if (!currentUserEmail) {
+                try {
+                    // Attempt to fetch email, but fail silently if DB is corrupt
+                    const db = getDb();
+                    const stmt = db.prepare('SELECT email FROM clinic_settings LIMIT 1');
+                    const row = stmt.get();
+                    if (row)
+                        currentUserEmail = row.email;
+                }
+                catch (e) {
+                    console.warn('Skipping restoration email check (DB unavailable):', e);
+                }
+            }
+            closeConnection();
+            const result = await backupService.restoreFromCloud(args?.fileId, args?.password, activeDbPath, currentUserEmail, args?.force);
+            if (result.success) {
+                app.relaunch();
+                app.exit(0);
+            }
+            else {
+                throw new Error(result.error || 'Restore failed without error message');
+            }
+            return result;
+        }
+        catch (error) {
+            console.error('Restore Error:', error);
+            // Re-open DB if restore failed so app doesn't crash
+            initializeDatabase();
+            // Pass special security errors through
+            return { success: false, error: error.message };
+        }
+    });
+    // Explicitly log registration to confirm it runs
+    console.log('Registering handler: backup:list-cloud');
+    ipcMain.handle('backup:list-cloud', async () => {
+        try {
+            console.log('Invoked: backup:list-cloud');
+            const files = await googleDriveService.listFiles();
+            return files || [];
+        }
+        catch (e) {
+            console.error('List Cloud Error', e);
+            return [];
+        }
+    });
+    ipcMain.handle('backup:delete-cloud', async (_, { fileId }) => {
+        try {
+            await googleDriveService.deleteFile(fileId);
+            return { success: true };
+        }
+        catch (e) {
+            console.error('Delete Cloud Error', e);
+            return { success: false, message: e.message };
+        }
+    });
+    ipcMain.handle('backup:restore-local', async (_, args) => {
+        let filePath = args?.filePath;
+        const password = args?.password;
+        try {
+            // 1. Open File Dialog ONLY if path not provided
+            if (!filePath) {
+                const { canceled, filePaths } = await dialog.showOpenDialog({
+                    title: 'Select Backup File',
+                    filters: [
+                        { name: 'All Backup Files', extensions: ['db', 'enc', 'sqlite'] },
+                        { name: 'Database Files', extensions: ['db'] },
+                        { name: 'Encrypted Backup Files', extensions: ['enc'] }
+                    ],
+                    properties: ['openFile']
+                });
+                if (canceled || filePaths.length === 0)
+                    return { success: false, reason: 'canceled' };
+                filePath = filePaths[0];
+            }
+            // 2. Get active DB path & current email
+            const activeDbPath = path.join(app.getPath('userData'), 'dental.db');
+            let currentUserEmail = args?.email;
+            if (!currentUserEmail) {
+                try {
+                    const db = getDb();
+                    const stmt = db.prepare('SELECT email FROM clinic_settings LIMIT 1');
+                    const row = stmt.get();
+                    if (row)
+                        currentUserEmail = row.email;
+                }
+                catch (e) {
+                    console.warn('Skipping restoration email check (DB unavailable):', e);
+                }
+            }
+            closeConnection();
+            // 3. Call Service
+            const result = await backupService.restoreFromLocalFile(filePath, password, activeDbPath, currentUserEmail);
+            if (result.success) {
+                setTimeout(() => {
+                    app.relaunch();
+                    app.exit(0);
+                }, 1500);
+            }
+            else {
+                throw new Error(result.error || 'Local restore failed');
+            }
+            return result;
+        }
+        catch (error) {
+            console.error('Local Restore Error:', error);
+            initializeDatabase();
+            // Return filePath to allow retrying without re-selecting
+            return { success: false, error: error.message, filePath };
+        }
+    });
+    ipcMain.handle('backup:cloud-now', async (_, { password } = {}) => {
+        try {
+            const isAuth = await googleDriveService.isAuthenticated();
+            if (!isAuth)
+                return { success: false, error: 'Not authenticated with Cloud' };
+            return await backupService.performBackup({ mode: 'cloud', password });
+        }
+        catch (error) {
+            console.error('Cloud Backup Error:', error);
+            return { success: false, error: error.message };
+        }
+    });
+    ipcMain.handle('settings:get-backup-schedule', () => {
+        return backupService.getSchedule();
+    });
+    ipcMain.handle('settings:set-backup-schedule', (_, frequency) => {
+        backupService.setSchedule(frequency);
+        return true;
+    });
+    ipcMain.handle('backup:get-last-date', () => {
+        return backupService.getLastBackupDate();
+    });
+    // --- Expenses ---
+    ipcMain.handle('expenses:get-all', () => {
+        try {
+            const expenses = getDb().prepare('SELECT * FROM expenses ORDER BY date DESC, created_at DESC').all();
+            return { success: true, data: expenses };
+        }
+        catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+    ipcMain.handle('expenses:create', (_, { id, amount, date, category, description }) => {
+        try {
+            const stmt = getDb().prepare(`
+                INSERT INTO expenses (id, amount, date, category, description)
+                VALUES (?, ?, ?, ?, ?)
+            `);
+            stmt.run(id, amount, date, category, description);
+            return { success: true };
+        }
+        catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+    ipcMain.handle('expenses:update', (_, { id, amount, date, category, description }) => {
+        try {
+            const stmt = getDb().prepare(`
+                UPDATE expenses 
+                SET amount = ?, date = ?, category = ?, description = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            `);
+            stmt.run(amount, date, category, description, id);
+            return { success: true };
+        }
+        catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+    ipcMain.handle('expenses:delete', (_, { id }) => {
+        try {
+            getDb().prepare('DELETE FROM expenses WHERE id = ?').run(id);
+            return { success: true };
+        }
+        catch (error) {
+            return { success: false, error: error.message };
         }
     });
 }

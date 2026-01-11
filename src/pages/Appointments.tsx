@@ -27,6 +27,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 import {
   Appointment,
@@ -54,6 +55,7 @@ const getAppointmentPatientName = (appointment: Appointment, patientsCache: Map<
 
 const AppointmentsPage: React.FC = () => {
   const { t, isRTL, language } = useLanguage();
+  const { user } = useAuth();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [patientsCache, setPatientsCache] = useState<Map<string, Patient | null>>(new Map());
   const [bookDialogOpen, setBookDialogOpen] = useState(false);
@@ -64,7 +66,7 @@ const AppointmentsPage: React.FC = () => {
 
   const loadAppointments = async () => {
     try {
-      const loadedAppointments = await getAppointments();
+      const loadedAppointments = await getAppointments(user?.email);
       setAppointments(loadedAppointments);
 
       const cache = new Map<string, Patient | null>();

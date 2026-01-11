@@ -7,9 +7,11 @@ export interface Patient {
   name: string;
   phone: string;
   gender: 'male' | 'female';
-  age: number;
+  age?: number;
+  birthDate?: string;
   cityId: string;
   notes: string;
+  medicalHistory?: string;
   deleted: boolean;
   createdAt: string;
   updatedAt: string;
@@ -26,10 +28,55 @@ export interface PatientAttachment {
 }
 
 // ============ PATIENTS CRUD ============
-export const getPatients = async (): Promise<Patient[]> => {
+export const getPatients = async (email?: string | null): Promise<Patient[]> => {
   try {
-    const data = await db.patients.getAll();
-    return data.map((p: any) => ({
+    const data = await db.patients.getAll(email);
+    return data.map((p: any) => {
+      // Calculate age if birth_date exists and age is missing
+      let calculatedAge = p.age;
+      if (!calculatedAge && p.birth_date) {
+        const birthDate = new Date(p.birth_date);
+        const today = new Date();
+        calculatedAge = today.getFullYear() - birthDate.getFullYear();
+        const m = today.getMonth() - birthDate.getMonth();
+        if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+          calculatedAge--;
+        }
+      }
+
+      return {
+        id: p.id,
+        name: p.full_name,
+        phone: p.phone,
+        gender: p.gender,
+        age: calculatedAge,
+        birthDate: p.birth_date,
+        cityId: p.city_id,
+        notes: p.notes,
+        medicalHistory: p.medical_history,
+        deleted: false,
+        createdAt: p.created_at,
+        updatedAt: p.updated_at
+      };
+    });
+  } catch (error) {
+    console.error("Failed to get patients", error);
+    return [];
+  }
+};
+
+
+export const getActivePatients = async (email?: string | null): Promise<Patient[]> => {
+  const all = await getPatients(email);
+  return all;
+};
+
+export const getPatientById = async (id: string): Promise<Patient | undefined> => {
+  try {
+    const p = await window.api.getPatientById(id);
+    if (!p) return undefined;
+
+    return {
       id: p.id,
       name: p.full_name,
       phone: p.phone,
@@ -37,24 +84,15 @@ export const getPatients = async (): Promise<Patient[]> => {
       age: p.age,
       cityId: p.city_id,
       notes: p.notes,
+      medicalHistory: p.medical_history,
       deleted: false,
       createdAt: p.created_at,
       updatedAt: p.updated_at
-    }));
+    };
   } catch (error) {
-    console.error("Failed to get patients", error);
-    return [];
+    console.error("Failed to get patient", error);
+    return undefined;
   }
-};
-
-export const getActivePatients = async (): Promise<Patient[]> => {
-  const all = await getPatients();
-  return all;
-};
-
-export const getPatientById = async (id: string): Promise<Patient | undefined> => {
-  const all = await getPatients(); // Inefficient, use specific query in future
-  return all.find(p => p.id === id);
 };
 
 export const checkDuplicatePatient = async (phone: string, excludeId?: string): Promise<boolean> => {
@@ -65,7 +103,7 @@ export const checkDuplicatePatient = async (phone: string, excludeId?: string): 
   );
 };
 
-export const createPatient = async (patient: Omit<Patient, 'id' | 'deleted' | 'createdAt' | 'updatedAt'> & { clinicId?: string }): Promise<{ success: boolean; data?: Patient; error?: string; code?: 'DUPLICATE_PHONE' | 'DB_ERROR' }> => {
+export const createPatient = async (patient: Omit<Patient, 'id' | 'deleted' | 'createdAt' | 'updatedAt'> & { clinicId?: string, ownerEmail?: string }): Promise<{ success: boolean; data?: Patient; error?: string; code?: 'DUPLICATE_PHONE' | 'DB_ERROR' }> => {
   if (await checkDuplicatePatient(patient.phone)) {
     return { success: false, error: 'Patient with this phone number already exists', code: 'DUPLICATE_PHONE' };
   }
@@ -74,10 +112,10 @@ export const createPatient = async (patient: Omit<Patient, 'id' | 'deleted' | 'c
     full_name: patient.name,
     phone: patient.phone,
     gender: patient.gender,
-    age: patient.age,
+    birth_date: patient.birthDate,
     city_id: patient.cityId,
     notes: patient.notes,
-    clinic_id: patient.clinicId || 'default'
+    medical_history: patient.medicalHistory
   });
 
   if (result.error) {
@@ -106,7 +144,7 @@ export const updatePatient = async (id: string, updates: Partial<Patient>): Prom
   if (updates.name) dbUpdates.full_name = updates.name;
   if (updates.phone) dbUpdates.phone = updates.phone;
   if (updates.gender) dbUpdates.gender = updates.gender;
-  if (updates.age) dbUpdates.age = updates.age;
+  if (updates.birthDate) dbUpdates.birth_date = updates.birthDate;
   if (updates.cityId) dbUpdates.city_id = updates.cityId;
   if (updates.notes) dbUpdates.notes = updates.notes;
 
@@ -141,10 +179,7 @@ export const restorePatient = async (id: string): Promise<boolean> => {
 
 // ============ ATTACHMENTS CRUD ============
 export const getAttachmentsByPatientId = async (patientId: string): Promise<PatientAttachment[]> => {
-  const data = await window.electron.invoke('db:query', {
-    sql: 'SELECT * FROM attachments WHERE patient_id = ?',
-    params: [patientId]
-  });
+  const data = await window.api.dbQuery('SELECT * FROM attachments WHERE patient_id = ?', [patientId]);
   return data.map((a: any) => ({
     id: a.id,
     patientId: a.patient_id,
@@ -157,44 +192,38 @@ export const getAttachmentsByPatientId = async (patientId: string): Promise<Pati
 };
 
 export const createAttachment = async (attachment: Omit<PatientAttachment, 'id'>): Promise<PatientAttachment> => {
-  const result = await window.electron.invoke('db:insert', {
-    table: 'attachments',
-    data: {
-      patient_id: attachment.patientId,
-      file_name: attachment.fileName,
-      file_url: attachment.fileUrl,
-      file_type: attachment.fileType,
-      notes: attachment.notes
-    }
+  const result = await window.api.dbInsert('attachments', {
+    patient_id: attachment.patientId,
+    file_name: attachment.fileName,
+    file_url: attachment.fileUrl,
+    file_type: attachment.fileType,
+    notes: attachment.notes
   });
   return { ...attachment, id: result.data.id };
 };
 
 export const deleteAttachment = async (id: string): Promise<boolean> => {
-  await window.electron.invoke('db:delete', { table: 'attachments', id });
+  await window.api.dbDelete('attachments', id);
   return true;
 };
 
 // ============ STATS ============
-export const getPatientStats = async (patientId: string) => {
+export const getPatientStats = async (patientId: string, email?: string | null) => {
   // We can use SQL queries for this aggregation
 
-  // Total Appointments
-  const appointmentsRes = await window.electron.invoke('db:query', {
-    sql: 'SELECT * FROM appointments WHERE patient_id = ?',
-    params: [patientId]
-  });
+  const appSql = 'SELECT * FROM appointments WHERE patient_id = ?';
+  const appParams = [patientId];
+  const appointmentsRes = await window.api.dbQuery(appSql, appParams);
 
   // Invoices for paid/balance
-  const invoicesRes = await window.electron.invoke('db:query', {
-    sql: 'SELECT * FROM invoices WHERE patient_id = ?',
-    params: [patientId]
-  });
+  const invSql = 'SELECT * FROM invoices WHERE patient_id = ?';
+  const invParams = [patientId];
+  const invoicesRes = await window.api.dbQuery(invSql, invParams);
 
-  const treatmentCasesRes = await window.electron.invoke('db:query', {
-    sql: 'SELECT * FROM treatment_cases WHERE patient_id = ?',
-    params: [patientId]
-  });
+  // Treatment Cases
+  const tcSql = 'SELECT * FROM treatment_cases WHERE patient_id = ?';
+  const tcParams = [patientId];
+  const treatmentCasesRes = await window.api.dbQuery(tcSql, tcParams);
 
   const services = await db.services.getAll();
 

@@ -117,39 +117,29 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
 
   // Fetch all data from Supabase
   const fetchData = useCallback(async () => {
-    if (!clinicId || !user) {
-      setLoading(false);
-      return;
-    }
-
     setLoading(true);
     try {
-      // Fetch clinic info
-      const { data: clinicData } = await supabase
-        .from('clinics')
-        .select('*')
-        .eq('id', clinicId)
-        .single();
-
-      if (clinicData) {
-        setClinicInfo({
-          id: clinicData.id,
-          name: clinicData.clinic_name || '',
-          ownerName: clinicData.owner_name || '',
-          address: clinicData.address || '',
-          phone: clinicData.phone || '',
-          whatsappNumber: clinicData.whatsapp_number || '',
-          email: clinicData.email || '',
-          logo: clinicData.clinic_logo || '',
-        });
-        setCurrencyState((clinicData.currency as CurrencyCode) || 'EGP');
+      // 1. Fetch Local Data
+      try {
+        const { data: localData } = await window.electron.ipcRenderer.invoke('settings:getClinicInfo');
+        if (localData) {
+          setClinicInfo({
+            id: localData.id,
+            name: localData.clinic_name || '',
+            ownerName: localData.owner_name || '',
+            address: localData.address || '',
+            phone: localData.phone || '',
+            whatsappNumber: localData.whatsapp_number || '',
+            email: localData.email || '',
+            logo: localData.clinic_logo || '',
+          });
+          setCurrencyState((localData.currency as CurrencyCode) || 'EGP');
+        }
+      } catch (error) {
+        console.error('Local settings fetch failed:', error);
       }
 
-      // Fetch clinic info (Local DB doesn't have clinic info handler yet, keep Supabase or use mock? 
-      // For now we persist with Supabase for Clinic/Auth but switch lists to Local DB)
-      // Actually, we should probably switch all. but let's stick to the lists first.
-
-      // Fetch services
+      // Fetch services (Always fetch local)
       const servicesData = await db.services.getAll();
       if (servicesData) {
         setServices(servicesData.map((s: any) => ({
@@ -159,7 +149,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
         })));
       }
 
-      // Fetch cities
+      // Fetch cities (Always fetch local)
       const citiesData = await db.cities.getAll();
       if (citiesData) {
         setCities(citiesData.map((c: any) => ({
@@ -168,18 +158,19 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
         })));
       }
 
-      // Fetch doctors
+      // Fetch doctors (Always fetch local)
       const doctorsData = await db.doctors.getAll();
       if (doctorsData) {
         setDoctors(doctorsData.map((d: any) => ({
           id: d.id,
           name: d.name,
           role: (d.role as 'doctor' | 'assistant' | 'hygienist') || 'doctor',
-          active: d.active === 1 || d.active === true, // SQLite might return 1 for true
+          active: d.active === 1 || d.active === true,
           commissionType: (d.commission_type as 'percentage' | 'fixed') || 'percentage',
           commissionValue: Number(d.commission_value) || 0,
         })));
       }
+
     } catch (error) {
       console.error('Error fetching settings:', error);
     } finally {
@@ -239,7 +230,6 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
   const addCity = async (city: Omit<City, 'id'>): Promise<boolean> => {
     const { data, error } = await db.cities.create({
       name: city.name,
-      // clinic_id: clinicId, // Removed: Not in local schema
     });
 
     if (!error && data) {
@@ -284,7 +274,6 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
       active: doctor.active ? 1 : 0,
       commission_type: doctor.commissionType,
       commission_value: doctor.commissionValue,
-      // clinic_id: clinicId, // Removed: Not in local schema
     });
 
     if (!error && data) {
@@ -340,15 +329,25 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
 
   // Currency methods
   const setCurrency = async (code: CurrencyCode) => {
-    if (!clinicId) return;
+    // 1. Update State
+    setCurrencyState(code);
 
-    const { error } = await supabase
-      .from('clinics')
-      .update({ currency: code })
-      .eq('id', clinicId);
-
-    if (!error) {
-      setCurrencyState(code);
+    // 2. Sync Local
+    const syncData = {
+      id: clinicInfo.id,
+      name: clinicInfo.name,
+      ownerName: clinicInfo.ownerName,
+      address: clinicInfo.address,
+      phone: clinicInfo.phone,
+      whatsappNumber: clinicInfo.whatsappNumber,
+      email: clinicInfo.email,
+      logo: clinicInfo.logo,
+      currency: code
+    };
+    try {
+      await window.electron.ipcRenderer.invoke('settings:syncClinicInfo', syncData);
+    } catch (e) {
+      console.error('Local sync failed', e);
     }
   };
 
@@ -364,23 +363,27 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
 
   // Clinic Info methods
   const updateClinicInfo = async (info: Partial<ClinicInfo>) => {
-    if (!clinicId) return;
+    try {
+      // 1. Immediate State Update (Optimistic)
+      // Creates a new object to trigger React re-renders immediately
+      const updatedInfo = { ...clinicInfo, ...info };
+      setClinicInfo(updatedInfo);
 
-    const { error } = await supabase
-      .from('clinics')
-      .update({
-        ...(info.name && { clinic_name: info.name }),
-        ...(info.ownerName !== undefined && { owner_name: info.ownerName }),
-        ...(info.address !== undefined && { address: info.address }),
-        ...(info.phone !== undefined && { phone: info.phone }),
-        ...(info.whatsappNumber !== undefined && { whatsapp_number: info.whatsappNumber }),
-        ...(info.email !== undefined && { email: info.email }),
-        ...(info.logo !== undefined && { clinic_logo: info.logo }),
-      })
-      .eq('id', clinicId);
+      // 2. Persist to Local SQLite
+      // We use 'settings:save-clinic-info' which expects the full object with camelCase keys
+      // It will handle the mapping to snake_case for the DB internally in the main process
+      const syncData = {
+        ...updatedInfo,
+        logo: updatedInfo.logo || '', // Ensure explicitly string
+        currency: currency // Include currency from current state to ensure consistency
+      };
 
-    if (!error) {
-      setClinicInfo(prev => ({ ...prev, ...info }));
+      await window.electron.ipcRenderer.invoke('settings:save-clinic-info', syncData);
+
+      // Note: Cloud sync removed as per user request. Local only.
+    } catch (error) {
+      console.error('Failed to update clinic info:', error);
+      // Optional: Rollback state if save fails, but for settings, usually we just log error
     }
   };
 

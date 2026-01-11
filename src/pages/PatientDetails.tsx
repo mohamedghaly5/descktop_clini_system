@@ -43,6 +43,7 @@ import {
 } from '@/components/ui/collapsible';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useSettings } from '@/contexts/SettingsContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 import {
   Patient,
@@ -68,7 +69,8 @@ const PatientDetailsPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { language, isRTL, t } = useLanguage();
-  const { cities } = useSettings();
+  const { cities, formatCurrency } = useSettings();
+  const { user } = useAuth();
 
   const [patient, setPatient] = useState<Patient | null>(null);
   const [stats, setStats] = useState<Awaited<ReturnType<typeof getPatientStats>> | null>(null);
@@ -109,7 +111,7 @@ const PatientDetailsPage: React.FC = () => {
 
         // Load stats and attachments in parallel
         const [statsData, attachmentsData] = await Promise.all([
-          getPatientStats(id),
+          getPatientStats(id, user?.email),
           getAttachmentsByPatientId(id)
         ]);
 
@@ -179,9 +181,10 @@ const PatientDetailsPage: React.FC = () => {
         nameAr: newPlanData.name,
         totalCost: parseFloat(newPlanData.cost),
         totalPaid: 0,
+        totalPaid: 0,
         balance: parseFloat(newPlanData.cost),
         status: 'active'
-      });
+      }, user?.email);
 
       toast({
         title: language === 'ar' ? 'تم إنشاء الخطة' : 'Plan Created',
@@ -415,11 +418,11 @@ const PatientDetailsPage: React.FC = () => {
               <p className="text-sm text-muted-foreground">{language === 'ar' ? 'الحضور' : 'Attended'}</p>
             </div>
             <div className="text-center p-3 rounded-lg bg-accent/10">
-              <p className="text-2xl font-bold text-accent">{stats.totalPaid} {language === 'ar' ? 'ر.س' : 'SAR'}</p>
+              <p className="text-2xl font-bold text-accent">{formatCurrency(stats.totalPaid, language)}</p>
               <p className="text-sm text-muted-foreground">{language === 'ar' ? 'المدفوع' : 'Paid'}</p>
             </div>
             <div className="text-center p-3 rounded-lg bg-warning/10">
-              <p className="text-2xl font-bold text-warning">{stats.totalBalance} {language === 'ar' ? 'ر.س' : 'SAR'}</p>
+              <p className="text-2xl font-bold text-warning">{formatCurrency(stats.totalBalance, language)}</p>
               <p className="text-sm text-muted-foreground">{language === 'ar' ? 'المتبقي' : 'Balance'}</p>
             </div>
           </div>
@@ -519,11 +522,11 @@ const PatientDetailsPage: React.FC = () => {
                       </div>
                       <div className={cn("text-right", isRTL && "text-left")}>
                         <p className="font-medium text-success">
-                          {inv.amountPaid} {language === 'ar' ? 'ر.س' : 'SAR'}
+                          {formatCurrency(inv.amountPaid, language)}
                         </p>
                         {inv.balance > 0 && (
                           <p className="text-sm text-warning">
-                            {language === 'ar' ? 'متبقي:' : 'Balance:'} {inv.balance}
+                            {language === 'ar' ? 'متبقي:' : 'Balance:'} {formatCurrency(inv.balance, language)}
                           </p>
                         )}
                       </div>
@@ -589,14 +592,14 @@ const PatientDetailsPage: React.FC = () => {
                       </div>
                       <div className={cn("text-right", isRTL && "text-left")}>
                         <p className="text-sm">
-                          {language === 'ar' ? 'التكلفة:' : 'Cost:'} {tc.totalCost} {language === 'ar' ? 'ر.س' : 'SAR'}
+                          {language === 'ar' ? 'التكلفة:' : 'Cost:'} {formatCurrency(tc.totalCost, language)}
                         </p>
                         <p className="text-sm text-success">
-                          {language === 'ar' ? 'مدفوع:' : 'Paid:'} {tc.totalPaid}
+                          {language === 'ar' ? 'مدفوع:' : 'Paid:'} {formatCurrency(tc.totalPaid, language)}
                         </p>
                         {tc.balance > 0 && (
                           <p className="text-sm text-warning">
-                            {language === 'ar' ? 'متبقي:' : 'Balance:'} {tc.balance}
+                            {language === 'ar' ? 'متبقي:' : 'Balance:'} {formatCurrency(tc.balance, language)}
                           </p>
                         )}
                       </div>

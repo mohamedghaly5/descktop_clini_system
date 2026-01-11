@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { logger } from '@/utils/logger';
 
 type Language = 'en' | 'ar';
 type Direction = 'ltr' | 'rtl';
@@ -20,7 +21,8 @@ const translations: Translations = {
   reports: { en: 'Reports', ar: 'التقارير' },
   settings: { en: 'Settings', ar: 'الإعدادات' },
   pricing: { en: 'Pricing', ar: 'التسعير' },
-  
+  notifications: { en: 'Notifications', ar: 'الإشعارات' },
+
   // Dashboard
   welcomeBack: { en: 'Welcome Back', ar: 'مرحباً بعودتك' },
   clinicOverview: { en: 'Clinic Overview', ar: 'نظرة عامة على العيادة' },
@@ -40,7 +42,7 @@ const translations: Translations = {
   newPatient: { en: 'New Patient', ar: 'مريض جديد' },
   newAppointment: { en: 'New Appointment', ar: 'موعد جديد' },
   viewReports: { en: 'View Reports', ar: 'عرض التقارير' },
-  
+
   // Patient Form
   patientRegistration: { en: 'Patient Registration', ar: 'تسجيل مريض' },
   firstName: { en: 'First Name', ar: 'الاسم الأول' },
@@ -57,7 +59,7 @@ const translations: Translations = {
   notes: { en: 'Notes', ar: 'ملاحظات' },
   medicalHistory: { en: 'Medical History', ar: 'التاريخ الطبي' },
   allergies: { en: 'Allergies', ar: 'الحساسية' },
-  
+
   // Visit/Payment
   visitDetails: { en: 'Visit Details', ar: 'تفاصيل الزيارة' },
   service: { en: 'Service', ar: 'الخدمة' },
@@ -67,11 +69,12 @@ const translations: Translations = {
   cash: { en: 'Cash', ar: 'نقداً' },
   card: { en: 'Card', ar: 'بطاقة' },
   insurance: { en: 'Insurance', ar: 'تأمين' },
-  visitDate: { en: 'Visit Date', ar: 'تاريخ الزيارة' },
+  visitDate: { en: 'Visit Date', ar: 'التاريخ' },
   visitNotes: { en: 'Visit Notes', ar: 'ملاحظات الزيارة' },
-  
+
   // Actions
   save: { en: 'Save', ar: 'حفظ' },
+  saving: { en: 'Saving...', ar: 'جاري الحفظ...' },
   cancel: { en: 'Cancel', ar: 'إلغاء' },
   edit: { en: 'Edit', ar: 'تعديل' },
   delete: { en: 'Delete', ar: 'حذف' },
@@ -82,7 +85,7 @@ const translations: Translations = {
   clear: { en: 'Clear', ar: 'مسح' },
   add: { en: 'Add', ar: 'إضافة' },
   close: { en: 'Close', ar: 'إغلاق' },
-  
+
   // Messages
   success: { en: 'Success', ar: 'نجاح' },
   error: { en: 'Error', ar: 'خطأ' },
@@ -90,7 +93,7 @@ const translations: Translations = {
   requiredField: { en: 'This field is required', ar: 'هذا الحقل مطلوب' },
   invalidPhone: { en: 'Invalid phone number', ar: 'رقم هاتف غير صالح' },
   noResults: { en: 'No results found', ar: 'لم يتم العثور على نتائج' },
-  
+
   // Services
   cleaning: { en: 'Cleaning', ar: 'تنظيف' },
   filling: { en: 'Filling', ar: 'حشو' },
@@ -102,18 +105,18 @@ const translations: Translations = {
   xray: { en: 'X-Ray', ar: 'أشعة' },
   implant: { en: 'Implant', ar: 'زراعة' },
   braces: { en: 'Braces', ar: 'تقويم' },
-  
+
   // Time
   today: { en: 'Today', ar: 'اليوم' },
   yesterday: { en: 'Yesterday', ar: 'أمس' },
   thisWeek: { en: 'This Week', ar: 'هذا الأسبوع' },
   currency: { en: 'SAR', ar: 'ر.س' },
-  
+
   // Stats
   vsLastMonth: { en: 'vs last month', ar: 'مقارنة بالشهر الماضي' },
   increase: { en: 'increase', ar: 'زيادة' },
   decrease: { en: 'decrease', ar: 'نقصان' },
-  
+
   // Navigation
   home: { en: 'Home', ar: 'الرئيسية' },
   language: { en: 'Language', ar: 'اللغة' },
@@ -122,13 +125,13 @@ const translations: Translations = {
   logout: { en: 'Logout', ar: 'تسجيل الخروج' },
   collapse: { en: 'Collapse', ar: 'طي' },
   profile: { en: 'Profile', ar: 'الملف الشخصي' },
-  
+
   // Appointment Status
   booked: { en: 'Booked', ar: 'محجوز' },
   confirmed: { en: 'Confirmed', ar: 'مؤكد' },
   attended: { en: 'Attended', ar: 'حضر' },
   cancelled: { en: 'Cancelled', ar: 'ملغي' },
-  
+
   // Treatment & Invoice
   treatmentCase: { en: 'Treatment Case', ar: 'خطة العلاج' },
   invoice: { en: 'Invoice', ar: 'فاتورة' },
@@ -171,6 +174,95 @@ const translations: Translations = {
   defaultPrice: { en: 'Default Price', ar: 'السعر الافتراضي' },
   name: { en: 'Name', ar: 'الاسم' },
   role: { en: 'Role', ar: 'الدور' },
+
+  // Expenses
+  // Expenses (Strict Convention)
+  'expenses.label': { en: 'Expenses', ar: 'المصروفات' },
+  'expenses.page.title': { en: 'Expenses Management', ar: 'إدارة المصروفات' },
+  'expenses.page.subtitle': { en: 'Track and manage your clinic expenses.', ar: 'تتبع وإدارة مصروفات العيادة.' },
+  'expenses.button.add': { en: 'Add Expense', ar: 'إضافة مصروف' },
+  'expenses.table.category': { en: 'Category', ar: 'الفئة' },
+  'expenses.table.amount': { en: 'Amount', ar: 'المبلغ' },
+  'expenses.table.actions': { en: 'Actions', ar: 'إجراءات' },
+  'expenses.filter.dateRange': { en: 'Date Range', ar: 'نطاق التاريخ' },
+  'expenses.summary.daily': { en: 'Daily Expenses', ar: 'المصروفات اليومية' },
+  'expenses.summary.monthly': { en: 'Monthly Expenses', ar: 'المصروفات الشهرية' },
+  'expenses.summary.yearly': { en: 'Yearly Expenses', ar: 'المصروفات السنوية' },
+  'expenses.summary.forToday': { en: 'For today', ar: 'ليوم' },
+  'expenses.summary.currentMonth': { en: 'Current Month', ar: 'الشهر الحالي' },
+  'expenses.summary.currentYear': { en: 'Current Year', ar: 'السنة الحالية' },
+  'expenses.search.placeholder': { en: 'Search description or category...', ar: 'بحث في الوصف أو الفئة...' },
+  'expenses.filter.allCategories': { en: 'All Categories', ar: 'كل الفئات' },
+  'expenses.filter.last7Days': { en: 'Last 7 Days', ar: 'آخر 7 أيام' },
+  'expenses.filter.last30Days': { en: 'Last 30 Days', ar: 'آخر 30 يوم' },
+  'expenses.delete.title': { en: 'Are you sure?', ar: 'هل أنت متأكد؟' },
+  'expenses.delete.desc': { en: 'This action cannot be undone. This will permanently delete this expense record.', ar: 'لا يمكن التراجع عن هذا الإجراء. سيتم حذف سجل المصروفات هذا بشكل دائم.' },
+  'expenses.toast.added': { en: 'Expense created successfully', ar: 'تم إضافة المصروف بنجاح' },
+  'expenses.toast.updated': { en: 'Expense updated successfully', ar: 'تم تحديث المصروف بنجاح' },
+  'expenses.toast.deleted': { en: 'Expense deleted successfully', ar: 'تم حذف المصروف بنجاح' },
+  'expenses.input.selectCategory': { en: 'Select category', ar: 'اختر الفئة' },
+  'expenses.dialog.title.add': { en: 'Add Expense', ar: 'إضافة مصروف' },
+  'expenses.dialog.title.edit': { en: 'Edit Expense', ar: 'تعديل مصروف' },
+
+  // Expense Categories
+  'expenses.cat.Supplies': { en: 'Supplies', ar: 'مستلزمات' },
+  'expenses.cat.Utilities': { en: 'Utilities', ar: 'مرافق' },
+  'expenses.cat.Rent': { en: 'Rent', ar: 'إيجار' },
+  'expenses.cat.Salaries': { en: 'Salaries', ar: 'رواتب' },
+  'expenses.cat.Equipment': { en: 'Equipment', ar: 'معدات' },
+  'expenses.cat.Maintenance': { en: 'Maintenance', ar: 'صيانة' },
+  'expenses.cat.Marketing': { en: 'Marketing', ar: 'تسويق' },
+  'expenses.cat.Lab': { en: 'Lab', ar: 'معمل' },
+  'expenses.cat.Other': { en: 'Other', ar: 'أخرى' },
+  // Lab Orders
+  'lab.status': { en: 'Status', ar: 'الحالة' },
+  'lab.status.in_progress': { en: 'In Progress', ar: 'قيد التنفيذ' },
+  'lab.status.received': { en: 'Received', ar: 'تم الاستلام' },
+  'lab.status.late': { en: 'Late', ar: 'متأخر' },
+
+  // Lab Dialog
+  'lab.dialog.title': { en: 'New Lab Order', ar: 'إضافة أمر معمل' },
+  'lab.dialog.description': { en: 'Enter the details for the new laboratory order', ar: 'أدخل بيانات أمر المعمل الجديد' },
+  'lab.dialog.patient': { en: 'Patient', ar: 'المريض' },
+  'lab.dialog.selectPatient': { en: 'Select Patient', ar: 'اختر المريض' },
+  'lab.dialog.doctor': { en: 'Doctor', ar: 'الطبيب' },
+  'lab.dialog.selectDoctor': { en: 'Select Doctor', ar: 'اختر الطبيب' },
+  'lab.dialog.service': { en: 'Lab Service', ar: 'نوع العمل' },
+  'lab.dialog.selectService': { en: 'Select Service', ar: 'اختر الخدمة' },
+  'lab.dialog.expectedDate': { en: 'Expected Receive Date', ar: 'تاريخ الاستلام المتوقع' },
+  'lab.dialog.sentDate': { en: 'Sent Date', ar: 'تاريخ الإرسال' },
+  'lab.dialog.cost': { en: 'Cost', ar: 'التكلفة' },
+  'lab.dialog.notes': { en: 'Notes', ar: 'ملاحظات' },
+  'lab.dialog.save': { en: 'Save', ar: 'حفظ' },
+  'lab.dialog.cancel': { en: 'Cancel', ar: 'إلغاء' },
+
+  // Settings Lab Services
+  'settings.labServices.title': { en: 'Lab Services', ar: 'خدمات المعمل' },
+  'settings.labServices.description': { en: 'Manage lab services and their default costs', ar: 'إدارة خدمات المعمل وتكاليفها الافتراضية' },
+  'settings.labServices.add': { en: 'Add Service', ar: 'إضافة خدمة' },
+  'settings.labServices.name': { en: 'Service Name', ar: 'اسم الخدمة' },
+  'settings.labServices.cost': { en: 'Default Cost', ar: 'التكلفة الافتراضية' },
+  'settings.labServices.status': { en: 'Status', ar: 'الحالة' },
+  'settings.labServices.active': { en: 'Active', ar: 'نشط' },
+  'settings.labServices.inactive': { en: 'Inactive', ar: 'غير نشط' },
+  'settings.labServices.save': { en: 'Save', ar: 'حفظ' },
+  'settings.labServices.cancel': { en: 'Cancel', ar: 'إلغاء' },
+
+  // Lab Payment & Summary
+  'lab.pay': { en: 'Record Payment', ar: 'تسجيل دفعة' },
+  'lab.payment.title': { en: 'Record Lab Payment', ar: 'تسجيل دفعة للمعمل' },
+  'lab.payment.desc': { en: 'Register a payment made to the lab', ar: 'قم بتسجيل المبلغ الذي تم دفعه للمعمل' },
+  'lab.payment.amount': { en: 'Paid Amount', ar: 'المبلغ المدفوع' },
+  'lab.payment.notes': { en: 'Notes', ar: 'ملاحظات' },
+  'lab.payment.notesPlaceholder': { en: 'Example: Partial payment', ar: 'مثال: دفعة جزئية للمعمل' },
+  'lab.summary.totalOutstanding': { en: 'Total Lab Outstanding', ar: 'إجمالي مستحقات المعامل' },
+  'lab.summary.totalDescription': { en: 'Total remaining amount for all labs', ar: 'إجمالي المبالغ المتبقية لكل المعامل' },
+  'lab.summary.breakdown': { en: 'Outstanding Breakdown', ar: 'تفاصيل المستحقات' },
+  'lab.summary.orders': { en: 'Orders', ar: 'طلبات' },
+  'lab.summary.noDebt': { en: 'No outstanding debt', ar: 'لا توجد مديونية' },
+  'lab.orders': { en: 'Lab Orders', ar: 'طلبات المعمل' },
+  'savedSuccessfully': { en: 'Saved successfully', ar: 'تم الحفظ بنجاح' },
+  'expenses.validation.amountPositive': { en: 'Amount must be greater than zero', ar: 'يجب أن يكون المبلغ أكبر من صفر' },
 };
 
 interface LanguageContextType {
@@ -210,7 +302,7 @@ export const LanguageProvider: React.FC<LanguageProviderProps> = ({ children }) 
   const t = (key: string): string => {
     const translation = translations[key];
     if (!translation) {
-      console.warn(`Translation missing for key: ${key}`);
+      logger.warn(`Translation missing for key: ${key}`);
       return key;
     }
     return translation[language];

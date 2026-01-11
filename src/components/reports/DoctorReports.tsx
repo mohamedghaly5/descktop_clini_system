@@ -34,7 +34,11 @@ interface DoctorStats {
   commission: number;
 }
 
-const DoctorReports: React.FC = () => {
+interface DoctorReportsProps {
+  email?: string | null;
+}
+
+const DoctorReports: React.FC<DoctorReportsProps> = ({ email }) => {
   const { language } = useLanguage();
   const { doctors, formatCurrency, calculateDoctorCommission, getDoctorById } = useSettings();
 
@@ -47,12 +51,12 @@ const DoctorReports: React.FC = () => {
 
   React.useEffect(() => {
     const fetchData = async () => {
-      const { invoices: inv, appointments: apt } = await getDoctorReports(dateFrom, dateTo, selectedDoctor);
+      const { invoices: inv, appointments: apt } = await getDoctorReports(dateFrom, dateTo, selectedDoctor, email);
       setInvoices(inv);
       setAppointments(apt);
     };
     fetchData();
-  }, [dateFrom, dateTo, selectedDoctor]);
+  }, [dateFrom, dateTo, selectedDoctor, email]);
 
   const doctorStats = useMemo(() => {
     // invoices and appointments are now from state

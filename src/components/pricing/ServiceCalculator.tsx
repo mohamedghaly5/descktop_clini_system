@@ -82,7 +82,7 @@ const ServiceCalculator: React.FC<ServiceCalculatorProps> = ({
   const addIncludedService = (serviceId: string) => {
     const service = pricedServices.find(s => s.id === serviceId);
     if (!service) return;
-    
+
     // Only include materials cost
     const included: IncludedService = {
       serviceId,
@@ -157,10 +157,10 @@ const ServiceCalculator: React.FC<ServiceCalculatorProps> = ({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex flex-row-reverse items-center justify-between">
-          <div className="flex flex-row-reverse items-center gap-2">
-            <span>{editingService ? 'تعديل الخدمة' : 'حاسبة تكلفة الخدمة'}</span>
+        <CardTitle className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
             <Package className="w-5 h-5 text-primary" />
+            <span>{editingService ? 'تعديل الخدمة' : 'حاسبة تكلفة الخدمة'}</span>
           </div>
           {editingService && (
             <Button variant="ghost" size="sm" onClick={handleCancel}>
@@ -170,7 +170,7 @@ const ServiceCalculator: React.FC<ServiceCalculatorProps> = ({
           )}
         </CardTitle>
         <CardDescription className="text-right">
-          {editingService 
+          {editingService
             ? `تعديل خدمة: ${editingService.name}`
             : 'أضف خدمة جديدة وحدد الخامات والوقت ونسبة الربح'}
         </CardDescription>
@@ -191,10 +191,10 @@ const ServiceCalculator: React.FC<ServiceCalculatorProps> = ({
         {/* Materials Section */}
         <div className="space-y-4">
           <Label className="text-base font-semibold block text-right">الخامات المستخدمة</Label>
-          
-          {/* Add Material Form - RTL order: [إضافة] ← [عدد الحالات] ← [السعر] ← [اسم المنتج] */}
+
+          {/* Add Material Form */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3 p-4 bg-muted/50 rounded-lg">
-            <div className="space-y-1 md:order-4">
+            <div className="space-y-1">
               <Label className="text-xs block text-right">اسم المنتج</Label>
               <Input
                 value={newMaterial.productName}
@@ -203,7 +203,7 @@ const ServiceCalculator: React.FC<ServiceCalculatorProps> = ({
                 className="text-right"
               />
             </div>
-            <div className="space-y-1 md:order-3">
+            <div className="space-y-1">
               <Label className="text-xs block text-right">السعر ({currencySymbol})</Label>
               <Input
                 type="number"
@@ -211,22 +211,20 @@ const ServiceCalculator: React.FC<ServiceCalculatorProps> = ({
                 step="0.01"
                 value={newMaterial.productPrice}
                 onChange={(e) => setNewMaterial(prev => ({ ...prev, productPrice: parseFloat(e.target.value) || 0 }))}
-                dir="ltr"
-                className="text-left"
+                className="text-right"
               />
             </div>
-            <div className="space-y-1 md:order-2">
+            <div className="space-y-1">
               <Label className="text-xs block text-right">عدد الحالات</Label>
               <Input
                 type="number"
                 min="1"
                 value={newMaterial.casesServed}
                 onChange={(e) => setNewMaterial(prev => ({ ...prev, casesServed: parseInt(e.target.value) || 1 }))}
-                dir="ltr"
-                className="text-left"
+                className="text-right"
               />
             </div>
-            <div className="flex items-end md:order-1">
+            <div className="flex items-end">
               <Button onClick={addMaterial} size="sm" className="w-full">
                 <Plus className="w-4 h-4 ms-1" />
                 إضافة
@@ -238,15 +236,21 @@ const ServiceCalculator: React.FC<ServiceCalculatorProps> = ({
           {materials.length > 0 && (
             <div className="space-y-2">
               {materials.map((m) => (
-                <div key={m.id} className="flex flex-row-reverse items-center justify-between p-3 bg-background border border-border rounded-lg">
+                <div key={m.id} className="flex items-center justify-between p-3 bg-background border border-border rounded-lg">
                   <div className="flex-1 grid grid-cols-3 gap-4 text-sm">
                     <span className="font-medium text-right">{m.productName}</span>
-                    <span className="text-muted-foreground text-center" dir="ltr">
-                      {currencySymbol} {m.productPrice} / {m.casesServed} حالة
-                    </span>
-                    <span className="text-primary font-semibold text-left" dir="ltr">
-                      التكلفة: {currencySymbol} {m.costPerCase.toFixed(2)}
-                    </span>
+                    <div className="flex items-center justify-center gap-1 text-muted-foreground">
+                      <span>{m.productPrice}</span>
+                      <span className="text-xs">{currencySymbol}</span>
+                      <span>/</span>
+                      <span>{m.casesServed}</span>
+                      <span>حالة</span>
+                    </div>
+                    <div className="flex items-center justify-start gap-1 text-primary font-semibold">
+                      <span>التكلفة:</span>
+                      <span>{m.costPerCase.toFixed(2)}</span>
+                      <span className="text-xs">{currencySymbol}</span>
+                    </div>
                   </div>
                   <Button variant="ghost" size="icon" onClick={() => removeMaterial(m.id)} className="ms-2">
                     <Trash2 className="w-4 h-4 text-destructive" />
@@ -260,11 +264,11 @@ const ServiceCalculator: React.FC<ServiceCalculatorProps> = ({
         {/* Include Existing Service */}
         {pricedServices.length > 0 && availableServicesForInclusion.length > 0 && (
           <div className="space-y-4">
-            <Label className="text-base font-semibold flex flex-row-reverse items-center justify-end gap-2">
-              <span>تضمين خدمة موجودة (خامات فقط)</span>
+            <Label className="text-base font-semibold flex items-center gap-2">
               <Link2 className="w-4 h-4" />
+              <span>تضمين خدمة موجودة (خامات فقط)</span>
             </Label>
-            
+
             <Select onValueChange={addIncludedService}>
               <SelectTrigger className="text-right">
                 <SelectValue placeholder="اختر خدمة لتضمين خاماتها" />
@@ -272,7 +276,7 @@ const ServiceCalculator: React.FC<ServiceCalculatorProps> = ({
               <SelectContent>
                 {availableServicesForInclusion.map((service) => (
                   <SelectItem key={service.id} value={service.id} className="text-right">
-                    {service.name} - تكلفة خامات: {currencySymbol} {service.totalMaterialsCost.toFixed(2)}
+                    {service.name} - تكلفة خامات: {service.totalMaterialsCost.toFixed(2)} {currencySymbol}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -283,21 +287,22 @@ const ServiceCalculator: React.FC<ServiceCalculatorProps> = ({
                 {includedServices.map((inc) => {
                   const service = pricedServices.find(s => s.id === inc.serviceId);
                   return (
-                    <div key={inc.serviceId} className="flex flex-row-reverse items-center justify-between p-3 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg">
-                      <div className="flex flex-row-reverse items-center gap-2">
-                        <span className="font-medium">{service?.name}</span>
+                    <div key={inc.serviceId} className="flex items-center justify-between p-3 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg">
+                      <div className="flex items-center gap-2">
                         <Link2 className="w-4 h-4 text-blue-600" />
+                        <span className="font-medium">{service?.name}</span>
                         <span className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded">
                           تكلفة خامات فقط
                         </span>
                       </div>
-                      <div className="flex flex-row-reverse items-center gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-baseline gap-1 text-blue-600 font-semibold">
+                          <span>{inc.materialsOnlyCost.toFixed(2)}</span>
+                          <span className="text-xs">{currencySymbol}</span>
+                        </div>
                         <Button variant="ghost" size="icon" onClick={() => removeIncludedService(inc.serviceId)}>
                           <Trash2 className="w-4 h-4 text-destructive" />
                         </Button>
-                        <span className="text-blue-600 font-semibold" dir="ltr">
-                          {currencySymbol} {inc.materialsOnlyCost.toFixed(2)}
-                        </span>
                       </div>
                     </div>
                   );
@@ -309,7 +314,7 @@ const ServiceCalculator: React.FC<ServiceCalculatorProps> = ({
 
         {/* Time and Profit */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-2 md:order-2">
+          <div className="space-y-2">
             <Label htmlFor="profitPercentage" className="block text-right">نسبة الربح (%)</Label>
             <Input
               id="profitPercentage"
@@ -319,11 +324,10 @@ const ServiceCalculator: React.FC<ServiceCalculatorProps> = ({
               step="1"
               value={profitPercentage}
               onChange={(e) => setProfitPercentage(parseFloat(e.target.value) || 0)}
-              dir="ltr"
-              className="text-left"
+              className="text-right"
             />
           </div>
-          <div className="space-y-2 md:order-1">
+          <div className="space-y-2">
             <Label htmlFor="serviceTimeHours" className="block text-right">وقت الخدمة (بالساعات)</Label>
             <Input
               id="serviceTimeHours"
@@ -332,63 +336,80 @@ const ServiceCalculator: React.FC<ServiceCalculatorProps> = ({
               step="0.01"
               value={serviceTimeHours}
               onChange={(e) => setServiceTimeHours(parseFloat(e.target.value) || 0)}
-              dir="ltr"
-              className="text-left"
+              className="text-right"
             />
             <p className="text-xs text-muted-foreground text-right">
               مثال: 0.25 (ربع ساعة) • 0.5 (نصف ساعة) • 1.75 (ساعة و45 دقيقة)
             </p>
-            <p className="text-xs text-muted-foreground text-right">
-              تكلفة الساعة: {currencySymbol} {clinicCostSettings.finalClinicHourlyCost.toFixed(2)}
-            </p>
+            <div className="text-xs text-muted-foreground text-right flex items-center justify-start gap-1">
+              <span>تكلفة الساعة:</span>
+              <span>{clinicCostSettings.finalClinicHourlyCost.toFixed(2)}</span>
+              <span>{currencySymbol}</span>
+            </div>
           </div>
         </div>
 
         {/* Cost Breakdown */}
         <div className="bg-muted/50 rounded-xl p-6 space-y-4">
-          <h4 className="font-semibold flex flex-row-reverse items-center justify-end gap-2">
-            <span>تفاصيل التكلفة</span>
+          <h4 className="font-semibold flex items-center gap-2">
             <Calculator className="w-5 h-5 text-primary" />
+            <span>تفاصيل التكلفة</span>
           </h4>
-          
+
           <div className="space-y-3">
-            <div className="flex flex-row-reverse justify-between text-sm">
+            <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">إجمالي الخامات</span>
-              <span dir="ltr">{currencySymbol} {liveCosts.totalMaterialsCost.toFixed(2)}</span>
+              <div className="flex items-baseline gap-1">
+                <span>{liveCosts.totalMaterialsCost.toFixed(2)}</span>
+                <span className="text-xs">{currencySymbol}</span>
+              </div>
             </div>
-            <div className="flex flex-row-reverse justify-between text-sm">
+            <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">
                 تكلفة الوقت ({serviceTimeHours} ساعة × {clinicCostSettings.finalClinicHourlyCost.toFixed(2)})
               </span>
-              <span dir="ltr">{currencySymbol} {liveCosts.timeCost.toFixed(2)}</span>
+              <div className="flex items-baseline gap-1">
+                <span>{liveCosts.timeCost.toFixed(2)}</span>
+                <span className="text-xs">{currencySymbol}</span>
+              </div>
             </div>
-            <div className="flex flex-row-reverse justify-between text-sm border-t border-border pt-2">
+            <div className="flex justify-between text-sm border-t border-border pt-2">
               <span className="text-muted-foreground">التكلفة الأساسية</span>
-              <span className="font-medium" dir="ltr">{currencySymbol} {liveCosts.baseCost.toFixed(2)}</span>
+              <div className="flex items-baseline gap-1 font-medium">
+                <span>{liveCosts.baseCost.toFixed(2)}</span>
+                <span className="text-xs">{currencySymbol}</span>
+              </div>
             </div>
-            <div className="flex flex-row-reverse justify-between text-sm">
+            <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">الربح ({profitPercentage}%)</span>
-              <span className="text-green-600" dir="ltr">+ {currencySymbol} {liveCosts.profitValue.toFixed(2)}</span>
+              <div className="flex items-baseline gap-1 text-green-600">
+                <span>+</span>
+                <span>{liveCosts.profitValue.toFixed(2)}</span>
+                <span className="text-xs">{currencySymbol}</span>
+              </div>
             </div>
-            <div className="flex flex-row-reverse justify-between text-lg font-bold border-t border-border pt-3">
+            <div className="flex justify-between text-lg font-bold border-t border-border pt-3">
               <span>السعر النهائي</span>
-              <span className="text-primary" dir="ltr">{currencySymbol} {liveCosts.finalPrice.toFixed(2)}</span>
+              <div className="flex items-baseline gap-1 text-primary">
+                <span>{liveCosts.finalPrice.toFixed(2)}</span>
+                <span className="text-sm font-normal">{currencySymbol}</span>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Save Button - Actions aligned to left for Arabic UX */}
-        <div className="flex flex-row-reverse gap-3">
-          <Button onClick={saveService} className="flex-1" size="lg">
-            <Save className="w-5 h-5 ms-2" />
-            {editingService ? 'تحديث الخدمة' : 'حفظ الخدمة'}
-          </Button>
+        {/* Save Button */}
+        <div className="flex justify-end gap-3">
           {editingService && (
-            <Button variant="outline" onClick={handleCancel} className="flex-1">
+            <Button variant="outline" onClick={handleCancel} className="flex-1 md:flex-none">
               <X className="w-5 h-5 ms-2" />
               إلغاء
             </Button>
           )}
+          <Button onClick={saveService} className="flex-1 md:flex-none" size="lg">
+            <Save className="w-5 h-5 ms-2" />
+            {editingService ? 'تحديث الخدمة' : 'حفظ الخدمة'}
+          </Button>
         </div>
       </CardContent>
     </Card>

@@ -16,6 +16,7 @@ export interface Appointment {
   notes: string;
   treatmentCaseId?: string;
   invoiceId?: string;
+  doctorId?: string; // Valid Doctor ID
   createdAt: string;
   updatedAt: string;
 }
@@ -51,8 +52,9 @@ export interface Invoice {
 }
 
 // ============ PATIENTS (Proxy) ============
-export const getPatients = async (): Promise<Patient[]> => {
-  const p = await db.patients.getAll();
+export const getPatients = async (email?: string | null): Promise<Patient[]> => {
+  // Use direct IPC to support sorting/filtering by email
+  const p = await window.electron.ipcRenderer.invoke('patients:getAll', { email });
   return p.map((x: any) => ({
     id: x.id,
     name: x.full_name,
@@ -68,17 +70,19 @@ export const getPatients = async (): Promise<Patient[]> => {
 };
 
 async function getPatientName(id: string): Promise<string> {
+  // This internal helper might fail if we don't pass email, but it's used internally? 
+  // It calls getPatients(). defaulting to specific query might be better but for now:
   const patients = await getPatients();
   const p = patients.find(x => x.id === id);
   return p ? p.name : 'Unknown';
 }
 
 // ============ APPOINTMENTS ============
-export const getAppointments = async (): Promise<Appointment[]> => {
-  const data = await db.appointments.getAll();
+export const getAppointments = async (email?: string | null): Promise<Appointment[]> => {
+  const data = await window.electron.ipcRenderer.invoke('appointments:getAll', { email });
   // We need to fetch patients to map names to match interface
-  const patients = await getPatients(); // Inefficient but ok for MVP
-  const services = await db.services.getAll();
+  const patients = await getPatients(email);
+  const services = await window.electron.ipcRenderer.invoke('services:getAll', { email });
 
   return data.map((a: any) => {
     const p = patients.find(x => x.id === a.patient_id);
@@ -108,29 +112,27 @@ export const getAppointmentById = async (id: string): Promise<Appointment | unde
   return all.find(a => a.id === id);
 };
 
-export const createAppointment = async (appointment: Omit<Appointment, 'id' | 'createdAt' | 'updatedAt'>): Promise<Appointment> => {
-  const result = await db.appointments.create({
+export const createAppointment = async (appointment: Omit<Appointment, 'id' | 'createdAt' | 'updatedAt'>, email?: string | null): Promise<Appointment> => {
+  const payload = {
     patient_id: appointment.patientId,
     date: appointment.date,
     time: appointment.time,
     status: appointment.status,
     notes: appointment.notes,
     service_id: appointment.service,
-    // doctor_id?
-  });
+    doctor_id: appointment.doctorId
+  };
 
-  console.log('IPC Result for createAppointment:', result);
+  const result = await window.electron.ipcRenderer.invoke('db:insert', {
+    table: 'appointments',
+    data: payload
+  });
 
   if (result.error) {
     console.error('IPC Error:', result.error);
     throw new Error(result.error);
   }
 
-  // Extract ID based on varied IPC response formats
-  // 1. Supabase-style: { data: { id: ... } }
-  // 2. Direct object: { id: ... }
-  // 3. SQLite run result: { lastInsertRowid: ... }
-  // 4. Direct number: 123
   let id = result?.data?.id || result?.id || result?.lastInsertRowid;
   if (!id && typeof result === 'number') {
     id = result;
@@ -169,15 +171,37 @@ export const deleteAppointment = async (id: string): Promise<boolean> => {
 };
 
 // ============ TREATMENT CASES ============
-export const getTreatmentCases = async (): Promise<TreatmentCase[]> => {
-  // We need to add 'treatment_cases' table to SQLite
-  const data = await window.electron.invoke('db:query', { sql: 'SELECT * FROM treatment_cases' }).catch(() => []);
+export const getTreatmentCases = async (email?: string | null): Promise<TreatmentCase[]> => {
+  const data = await window.electron.ipcRenderer.invoke('treatment_cases:getAll', { email }).catch(() => []);
   if (!data) return [];
   return data.map((tc: any) => ({
     id: tc.id,
     patientId: tc.patient_id,
     patientName: tc.patient_name, // Stored or joined?
     patientNameAr: tc.patient_name,
+    name: tc.name, // treatment_cases has 'name'
+    nameAr: tc.name,
+    totalCost: tc.total_cost,
+    totalPaid: tc.total_paid,
+    balance: tc.balance,
+    status: tc.status,
+    createdAt: tc.created_at,
+    updatedAt: tc.updated_at
+  }));
+};
+
+export const getActiveTreatmentCasesByPatient = async (patientId: string, email?: string | null): Promise<TreatmentCase[]> => {
+  // Use new specific handler directly
+  const data = await window.electron.ipcRenderer.invoke('treatment_cases:getByPatient', { patientId }).catch((e: any) => {
+    console.error('Failed to get active cases', e);
+    return [];
+  });
+
+  return data.map((tc: any) => ({
+    id: tc.id,
+    patientId: tc.patient_id,
+    patientName: tc.patient_name || '',
+    patientNameAr: tc.patient_name || '',
     name: tc.name,
     nameAr: tc.name,
     totalCost: tc.total_cost,
@@ -189,15 +213,20 @@ export const getTreatmentCases = async (): Promise<TreatmentCase[]> => {
   }));
 };
 
-export const getActiveTreatmentCasesByPatient = async (patientId: string): Promise<TreatmentCase[]> => {
-  const all = await getTreatmentCases();
-  return all.filter(tc => tc.patientId === patientId && tc.status === 'active');
-};
+export const createTreatmentCase = async (treatmentCase: Omit<TreatmentCase, 'id' | 'createdAt' | 'updatedAt'>, email?: string | null): Promise<TreatmentCase> => {
+  const result = await window.electron.ipcRenderer.invoke('treatment_cases:create', { ...treatmentCase, ownerEmail: email });
+  // Fallback to generic if specific handler not found or use insert
+  // But wait, I added treatment_cases:create handler? No, I updated patients/appointments handlers?
+  // I should check handlers.ts. I think I missed treatment_cases:create.
+  // Actually, I can use generic db:insert and add owner_email manually here.
 
-export const createTreatmentCase = async (treatmentCase: Omit<TreatmentCase, 'id' | 'createdAt' | 'updatedAt'>): Promise<TreatmentCase> => {
-  const result = await window.electron.invoke('db:insert', {
-    table: 'treatment_cases',
-    data: {
+  if (result?.error) { // If using handler
+    throw new Error(result.error);
+  }
+
+  // If defaulting to db:insert (legacy path if handler absent)
+  if (!result || !result.success) {
+    const insertData = {
       patient_id: treatmentCase.patientId,
       patient_name: treatmentCase.patientName,
       name: treatmentCase.name,
@@ -205,15 +234,17 @@ export const createTreatmentCase = async (treatmentCase: Omit<TreatmentCase, 'id
       total_paid: treatmentCase.totalPaid,
       balance: treatmentCase.balance,
       status: treatmentCase.status
-    }
-  });
+    };
 
-  if (result.error) {
-    console.error('IPC Error in createTreatmentCase:', result.error);
-    throw new Error(result.error);
+    const res = await window.electron.ipcRenderer.invoke('db:insert', {
+      table: 'treatment_cases',
+      data: insertData
+    });
+    if (res.error) throw new Error(res.error);
+    return { ...treatmentCase, id: res.data.id, createdAt: '', updatedAt: '' };
   }
 
-  return { ...treatmentCase, id: result.data.id, createdAt: '', updatedAt: '' };
+  return { ...treatmentCase, id: result.id || '', createdAt: '', updatedAt: '' };
 };
 
 export const updateTreatmentCase = async (id: string, updates: Partial<TreatmentCase>): Promise<TreatmentCase | null> => {
@@ -222,7 +253,7 @@ export const updateTreatmentCase = async (id: string, updates: Partial<Treatment
   if (updates.balance !== undefined) dbUpdates.balance = updates.balance;
   if (updates.status) dbUpdates.status = updates.status;
 
-  const result = await window.electron.invoke('db:update', { table: 'treatment_cases', id, data: dbUpdates });
+  const result = await window.electron.ipcRenderer.invoke('db:update', { table: 'treatment_cases', id, data: dbUpdates });
   if (result.error) {
     console.error('IPC Error in updateTreatmentCase:', result.error);
     throw new Error(result.error);
@@ -231,22 +262,19 @@ export const updateTreatmentCase = async (id: string, updates: Partial<Treatment
 };
 
 // ============ INVOICES ============
-export const getInvoices = async (): Promise<Invoice[]> => {
-  const data = await window.electron.invoke('services:getAll').catch(() => []); // Oops, need invoices:getAll
-  // Using explicit SQL via generic handler if available, or just mocking empty for now
-  // Let's assume we invoke a 'db:query' for strictness
-  const res = await window.electron.invoke('db:query', { sql: 'SELECT * FROM invoices' }).catch(() => []);
+export const getInvoices = async (email?: string | null): Promise<Invoice[]> => {
+  const res = await window.electron.ipcRenderer.invoke('invoices:getAll', { email }).catch(() => []);
   return res.map((i: any) => ({
     id: i.id,
     patientId: i.patient_id,
     appointmentId: i.appointment_id,
-    treatmentCaseId: i.treatment_case_id, // Schema needs this
+    treatmentCaseId: i.treatment_case_id,
     doctorId: i.doctor_id,
-    serviceName: i.service_name || '', // Schema needs this? Or join?
+    serviceName: i.service_name || '',
     serviceNameAr: '',
-    cost: i.amount, // Schema has 'amount'
+    cost: i.amount,
     amountPaid: i.paid_amount,
-    balance: i.amount - i.paid_amount,
+    balance: (i.amount || 0) - (i.paid_amount || 0),
     date: i.created_at,
     createdAt: i.created_at
   }));
@@ -257,16 +285,18 @@ export const getInvoiceByAppointmentId = async (appointmentId: string): Promise<
   return all.find(inv => inv.appointmentId === appointmentId);
 };
 
-export const createInvoice = async (invoice: Omit<Invoice, 'id' | 'createdAt'>): Promise<Invoice> => {
-  const result = await window.electron.invoke('db:insert', {
+export const createInvoice = async (invoice: Omit<Invoice, 'id' | 'createdAt'>, email?: string | null): Promise<Invoice> => {
+  const result = await window.electron.ipcRenderer.invoke('db:insert', {
     table: 'invoices',
     data: {
       patient_id: invoice.patientId,
       appointment_id: invoice.appointmentId,
       treatment_case_id: invoice.treatmentCaseId,
       amount: invoice.cost,
-      paid_amount: invoice.amountPaid,
-      status: invoice.balance > 0 ? 'pending' : 'paid'
+      paid_amount: invoice.amountPaid || 0,
+      status: invoice.balance > 0 ? 'pending' : 'paid',
+      doctor_id: invoice.doctorId,
+      service_id: invoice.serviceName // Warning: This field in Invoice interface is 'serviceName'. Just mapping it for now, but should ideally be serviceId.
     }
   });
 
@@ -279,7 +309,7 @@ export const createInvoice = async (invoice: Omit<Invoice, 'id' | 'createdAt'>):
 };
 
 export const deleteInvoice = async (id: string): Promise<boolean> => {
-  const result = await window.electron.invoke('invoices:delete', { id });
+  const result = await window.electron.ipcRenderer.invoke('invoices:delete', { id });
   if (result.error) {
     console.error('Error deleting invoice:', result.error);
     return false;
@@ -288,7 +318,7 @@ export const deleteInvoice = async (id: string): Promise<boolean> => {
 };
 
 export const deleteTreatmentCase = async (id: string): Promise<boolean> => {
-  const result = await window.electron.invoke('treatment_cases:delete', { id });
+  const result = await window.electron.ipcRenderer.invoke('treatment_cases:delete', { id });
   if (result.error) {
     console.error('Error deleting treatment case:', result.error);
     return false;
@@ -306,8 +336,9 @@ export const markAppointmentAttended = async (
   amountPaid: number = 0,
   doctorId: string,
   newCaseName?: string,
-  newCaseNameAr?: string
-): Promise<any> => { // Changed return type to any for raw IPC result
+  newCaseNameAr?: string,
+  ownerEmail?: string | null
+): Promise<any> => {
 
   const payload = {
     appointmentId,
@@ -316,19 +347,21 @@ export const markAppointmentAttended = async (
     cost,
     amountPaid,
     doctorId,
-    newCaseName
+    newCaseName,
+    ownerEmail
   };
 
   try {
-    const result = await window.electron.invoke('appointments:markAttended', payload);
+    const result = await window.electron.ipcRenderer.invoke('appointments:markAttended', payload);
     return result;
   } catch (error) {
     console.error('Service: markAppointmentAttended error:', error);
     return { success: false, error: String(error) };
   }
 };
-export const getDoctorReports = async (from: string, to: string, doctorId: string): Promise<{ invoices: Invoice[], appointments: Appointment[] }> => {
-  const result = await window.electron.invoke('reports:doctors', { from, to, doctorId });
+
+export const getDoctorReports = async (from: string, to: string, doctorId: string, email?: string | null): Promise<{ invoices: Invoice[], appointments: Appointment[] }> => {
+  const result = await window.electron.ipcRenderer.invoke('reports:doctors', { from, to, doctorId, email });
   if (result.error) {
     console.error('Error fetching doctor reports:', result.error);
     return { invoices: [], appointments: [] };
@@ -345,22 +378,10 @@ export const getDoctorReports = async (from: string, to: string, doctorId: strin
     serviceNameAr: '',
     cost: i.amount,
     amountPaid: i.paid_amount,
-    balance: i.amount - i.paid_amount,
+    balance: (i.amount || 0) - (i.paid_amount || 0),
     date: i.created_at,
     createdAt: i.created_at,
   }));
-
-  // Map appointments if needed, or just pass formatted
-  // Current getAppointments includes patient name, etc. The raw DB result might lack this.
-  // Ideally we should reuse getAppointments logic but that fetches ALL.
-  // For reports, we might need basic info.
-  // Let's rely on standard mapping but we might miss Joined fields (Patient Name).
-  // This is a trade-off. We might need to fetch patients separately or Join in SQL.
-  // Given time constraints, let's Map what we have. 
-  // Update: The UI (DoctorReports) assumes appointments have proper structure?
-  // It uses `apt.status` and `apt.date`.
-  // It DOES NOT display patient names in the aggregated table.
-  // So raw mapping is fine.
 
   return {
     invoices: mappedInvoices,

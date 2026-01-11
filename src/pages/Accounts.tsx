@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useSettings } from '@/contexts/SettingsContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 import { getInvoices, Invoice, deleteInvoice } from '@/services/appointmentService';
 import { getPatients, Patient } from '@/services/patientService';
@@ -23,15 +24,16 @@ import { formatDate } from '@/utils/format';
 const AccountsPage: React.FC = () => {
   const { t, isRTL, language } = useLanguage();
   const { formatCurrency } = useSettings();
+  const { user } = useAuth();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [invoiceToDelete, setInvoiceToDelete] = useState<Invoice | null>(null);
 
   const loadData = async () => {
-    const fetchedInvoices = await getInvoices();
+    const fetchedInvoices = await getInvoices(user?.email);
     setInvoices(fetchedInvoices);
-    const fetchedPatients = await getPatients();
+    const fetchedPatients = await getPatients(user?.email);
     setPatients(fetchedPatients);
   };
 

@@ -22,16 +22,19 @@ const NewPatientPage: React.FC = () => {
       // Data comes from PatientForm. It has name, phone, etc. + serviceType, amountPaid, visitNotes.
 
       // 1. Create Patient
-      const patient = await createPatientService({
+      // 1. Create Patient
+      const result = await createPatientService({
         name: data.name,
         phone: data.phone,
-        age: data.age ? parseInt(data.age) : 0,
+        birthDate: data.birthDate,
         gender: data.gender,
         cityId: data.cityId,
-        notes: data.notes
+        notes: data.notes,
+        medicalHistory: data.medicalHistory
       });
 
-      if (!patient) throw new Error("Failed to create patient");
+      if (!result.success || !result.data) throw new Error(result.error || "Failed to create patient");
+      const patient = result.data;
 
       // 2. Create Appointment & Mark Attended (since paid)
       // Create "Booked" appointment first? Or directly attended?
@@ -47,25 +50,21 @@ const NewPatientPage: React.FC = () => {
         date: today,
         time: now,
         service: data.serviceType,
-        serviceAr: '', // service logic will fill
+        serviceAr: '',
         status: 'booked',
-        notes: data.visitNotes || ''
+        notes: data.visitNotes || '',
+        doctorId: data.doctorId
       });
 
       // 3. Mark Attended / Create Invoice
-      // Use markAppointmentAttended helper
-      // We need service name. Service ID is in data.serviceType.
-      // Ideally we fetch service name or pass it.
-      // For MVP, passing ID as name if we lack it, but markAppointmentAttended expects name.
-      // We will rely on service logic to fetch or use placeholder.
       await markAppointmentAttended(
         appointment.id,
         'new', // Create new treatment case
         'New Visit', // Fallback service name
         'زيارة جديدة',
-        parseFloat(data.amountPaid) || 0, // Cost (Price)
+        parseFloat(data.amountPaid) || 0, // Cost
         parseFloat(data.amountPaid) || 0, // Paid
-        'default-doctor', // Doctor ID
+        data.doctorId, // Doctor ID
         'Treatment Case',
         'خطة علاج'
       );
@@ -75,11 +74,22 @@ const NewPatientPage: React.FC = () => {
         description: isRTL ? 'تم تسجيل المريض والزيارة' : 'Patient and visit registered',
       });
       navigate('/patients');
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+
+      let title = isRTL ? 'خطأ' : 'Error';
+      let description = isRTL ? 'فشل التسجيل' : 'Registration failed';
+
+      // Handle User-Facing License Errors
+      const errorMessage = e.message || '';
+      if (errorMessage.includes('LICENSE_EXPIRED')) {
+        title = isRTL ? 'فشل الحفظ' : 'Save Failed';
+        description = isRTL ? 'يرجى تفعيل الرخصة' : 'Please activate the license';
+      }
+
       toast({
-        title: isRTL ? 'خطأ' : 'Error',
-        description: isRTL ? 'فشل التسجيل' : 'Registration failed',
+        title: title,
+        description: description,
         variant: 'destructive'
       });
     }
