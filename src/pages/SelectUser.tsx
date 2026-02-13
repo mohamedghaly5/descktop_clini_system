@@ -6,8 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { User as UserIcon, Lock, Loader2, ArrowRight } from 'lucide-react';
+import { User as UserIcon, Lock, Loader2, ArrowRight, Server, Network } from 'lucide-react';
 import { toast } from 'sonner';
+import { authService } from '../services/authService';
 
 interface AuthUser {
     id: string;
@@ -25,18 +26,33 @@ const SelectUser = () => {
 
     const [selectedUser, setSelectedUser] = useState<AuthUser | null>(null);
     const [pin, setPin] = useState('');
-    const [rememberMe, setRememberMe] = useState(false);
+
     const [isLoggingIn, setIsLoggingIn] = useState(false);
+    const [debugClicks, setDebugClicks] = useState(0);
+
+    // Feature Flags
+    const showServerOptions = true; // Visible to all users as requested
+
+    const handleTitleClick = () => {
+        if (showServerOptions && !debugClicks) return; // Already visible
+        const newCount = debugClicks + 1;
+        setDebugClicks(newCount);
+        if (newCount === 5) {
+            toast.success("Advanced Options Unlocked");
+        }
+    };
 
     useEffect(() => {
         const loadUsers = async () => {
             try {
-                // @ts-ignore
-                const fetchedUsers = await window.electron.ipcRenderer.invoke('auth:get-users');
+                // Fetch users via Service (handles Local vs Client mode internally)
+                const fetchedUsers = await authService.getUsers();
                 setUsers(fetchedUsers);
-            } catch (error) {
+            } catch (error: any) {
                 console.error('Failed to load users', error);
-                toast.error('Failed to load users');
+                // Extract message from Error object or string
+                const msg = error.message?.replace('Error: ', '') || 'Failed to load users';
+                toast.error(msg);
             } finally {
                 setLoading(false);
             }
@@ -56,8 +72,8 @@ const SelectUser = () => {
 
         setIsLoggingIn(true);
         try {
-            // Pass rememberMe to login function
-            const result = await login(selectedUser.id, pin, rememberMe);
+            // Pass rememberMe explicitly as false (disabled)
+            const result = await login(selectedUser.id, pin, false);
 
             if (result.success) {
                 toast.success(`Welcome back, ${selectedUser.name}`);
@@ -84,7 +100,13 @@ const SelectUser = () => {
         <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-4">
             <div className="w-full max-w-md space-y-8">
                 <div className="text-center">
-                    <h1 className="text-3xl font-bold text-gray-900">Dental Flow</h1>
+                    <h1
+                        className="text-3xl font-bold text-gray-900 cursor-pointer select-none active:text-gray-700 hover:opacity-80 transition-all"
+                        onClick={handleTitleClick}
+                        title="Click 5 times for options"
+                    >
+                        Dental Flow
+                    </h1>
                     <p className="mt-2 text-gray-600">Select your profile to continue</p>
                 </div>
 
@@ -151,16 +173,7 @@ const SelectUser = () => {
                                     </div>
                                 </div>
 
-                                <div className="flex items-center space-x-2">
-                                    <Checkbox
-                                        id="remember"
-                                        checked={rememberMe}
-                                        onCheckedChange={(c) => setRememberMe(c as boolean)}
-                                    />
-                                    <Label htmlFor="remember" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                        Remember me
-                                    </Label>
-                                </div>
+
 
                                 <div className="flex gap-3">
                                     <Button
@@ -183,6 +196,30 @@ const SelectUser = () => {
                             </form>
                         </CardContent>
                     </Card>
+                )}
+
+                {/* Server Mode Toggle */}
+                {!selectedUser && showServerOptions && (
+                    <div className="pt-8 flex justify-center">
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-gray-400 hover:text-gray-600 hover:bg-gray-100 gap-2"
+                            onClick={() => navigate('/server-mode')}
+                        >
+                            <Server className="w-4 h-4" />
+                            <span className="text-xs">Switch to Server Mode</span>
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-gray-400 hover:text-gray-600 hover:bg-gray-100 gap-2 ml-2"
+                            onClick={() => navigate('/connect-server')}
+                        >
+                            <Network className="w-4 h-4" />
+                            <span className="text-xs">Client Mode</span>
+                        </Button>
+                    </div>
                 )}
             </div>
         </div>

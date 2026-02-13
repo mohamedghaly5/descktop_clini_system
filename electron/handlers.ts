@@ -18,6 +18,7 @@ import { registerLicenseHandlers } from './ipc/license.ipc.js';
 import { registerLabHandlers } from './ipc/lab.ipc.js';
 import { licenseService } from './license/license.service.js';
 import { logger } from './utils/logger.js';
+import { verifyPermission } from './utils/permissions.js';
 
 export function registerHandlers() {
     initializeDatabase();
@@ -60,7 +61,8 @@ export function registerHandlers() {
     };
 
     // --- Helper to get current clinic_id from user ---
-    // --- Helper to get current clinic_id from user ---
+    // --- Permission Helper moved to utils/permissions.ts ---
+
     const getContext = (): { clinicId: string } | null => {
         const userId = appMetaService.get('current_user_id');
         if (!userId) {
@@ -93,32 +95,7 @@ export function registerHandlers() {
         return null;
     };
 
-    // --- Notifications ---
-    ipcMain.handle('notifications:get-all', async (_, { userId }) => {
-        try {
-            const { data, error } = await supabase
-                .from('notifications')
-                .select('*')
-                .order('created_at', { ascending: false })
-                .limit(20);
 
-            if (error) throw error;
-            return { success: true, data };
-        } catch (error: any) {
-            console.error('Failed to fetch notifications:', error);
-            return { success: false, error: error.message };
-        }
-    });
-
-    ipcMain.handle('notifications:mark-read', async (_, { id }) => {
-        try {
-            const { error } = await supabase.from('notifications').update({ read: true }).eq('id', id);
-            if (error) throw error;
-            return { success: true };
-        } catch (error: any) {
-            return { success: false, error: error.message };
-        }
-    });
 
     // --- Financial Export ---
     ipcMain.handle('financials:export', async () => {
@@ -206,7 +183,8 @@ export function registerHandlers() {
     ipcMain.handle('patients:getAll', () => {
         try {
             const clinicId = getCurrentClinicId();
-            const query = "SELECT * FROM patients WHERE (clinic_id = ? OR clinic_id = 'clinic_001') ORDER BY created_at DESC";
+            // Exclude soft-deleted patients from the list
+            const query = "SELECT * FROM patients WHERE (clinic_id = ? OR clinic_id = 'clinic_001') AND (is_deleted IS NULL OR is_deleted = 0) ORDER BY created_at DESC";
             return getDb().prepare(query).all(clinicId);
         } catch (e) {
             console.error('[patients:getAll] Error:', e);
@@ -224,8 +202,22 @@ export function registerHandlers() {
         }
     });
 
+    ipcMain.handle('patients:getStatsForDelete', (_, { id }) => {
+        try {
+            const db = getDb();
+            const appointmentsCount = (db.prepare('SELECT COUNT(*) as count FROM appointments WHERE patient_id = ?').get(id) as any)?.count || 0;
+            const invoicesCount = (db.prepare('SELECT COUNT(*) as count FROM invoices WHERE patient_id = ?').get(id) as any)?.count || 0;
+            const treatmentCasesCount = (db.prepare('SELECT COUNT(*) as count FROM treatment_cases WHERE patient_id = ?').get(id) as any)?.count || 0;
+            return { appointmentsCount, invoicesCount, treatmentCasesCount };
+        } catch (error: any) {
+            console.error('Error fetching patient stats:', error);
+            return { appointmentsCount: 0, invoicesCount: 0, treatmentCasesCount: 0 };
+        }
+    });
+
     ipcMain.handle('patients:create', (_, data) => {
         checkReadOnly();
+        verifyPermission('ADD_PATIENT');
         const id = randomUUID();
         // Strict Single Source of Truth
         try {
@@ -273,6 +265,40 @@ export function registerHandlers() {
         } catch (err: any) {
             console.error('[patients:create] Error:', err);
             return { data: null, error: err.message };
+        }
+    });
+
+    ipcMain.handle('patients:delete', (_, { id, deleteAppointments, deleteTreatmentCases, deleteInvoices }) => {
+        checkReadOnly();
+        verifyPermission('DELETE_PATIENT');
+
+        try {
+            const db = getDb();
+
+            db.transaction(() => {
+                // Delete related data based on options
+                if (deleteAppointments) {
+                    db.prepare('DELETE FROM appointments WHERE patient_id = ?').run(id);
+                }
+
+                if (deleteTreatmentCases) {
+                    // Delete invoices linked to treatment cases first (to avoid FK errors)
+                    db.prepare('DELETE FROM invoices WHERE treatment_case_id IN (SELECT id FROM treatment_cases WHERE patient_id = ?)').run(id);
+                    db.prepare('DELETE FROM treatment_cases WHERE patient_id = ?').run(id);
+                }
+
+                if (deleteInvoices) {
+                    db.prepare('DELETE FROM invoices WHERE patient_id = ?').run(id);
+                }
+
+                // Soft delete the patient (keeps name visible in remaining records)
+                db.prepare('UPDATE patients SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
+            })();
+
+            return { success: true };
+        } catch (err: any) {
+            console.error('[patients:delete] Error:', err);
+            return { success: false, error: err.message };
         }
     });
 
@@ -345,7 +371,12 @@ export function registerHandlers() {
                 FROM appointments A
                 LEFT JOIN treatment_cases TC ON A.treatment_case_id = TC.id
                 WHERE (A.clinic_id = ? OR A.clinic_id = 'clinic_001')
-                ORDER BY A.date DESC, A.time DESC
+                ORDER BY 
+                    CASE WHEN A.date >= DATE('now', 'localtime') THEN 0 ELSE 1 END ASC,
+                    CASE WHEN A.date >= DATE('now', 'localtime') THEN A.date END ASC,
+                    CASE WHEN A.date >= DATE('now', 'localtime') THEN A.time END ASC,
+                    CASE WHEN A.date < DATE('now', 'localtime') THEN A.date END DESC,
+                    CASE WHEN A.date < DATE('now', 'localtime') THEN A.time END DESC
             `).all(effectiveClinicId);
         } catch (e) {
             console.error('[appointments:getAll] Error:', e);
@@ -355,6 +386,7 @@ export function registerHandlers() {
 
     ipcMain.handle('appointments:create', (_, data) => {
         checkReadOnly();
+        verifyPermission('ADD_APPOINTMENT');
         // Strict Single Source of Truth
         const clinicId = getCurrentClinicId();
 
@@ -441,9 +473,11 @@ export function registerHandlers() {
 
             if (info) {
                 // Return normalized data structure
+                // Unify Identity: Return the CANONICAL clinicId, not existing UUID in table
                 return {
                     data: {
-                        id: info.id || clinicId,
+                        id: clinicId, // Force canonical ID
+                        _internal_id: info.id, // Keep internal UUID if needed for debug but hide from primary logic
                         clinic_name: info.clinic_name,
                         owner_name: info.owner_name,
                         phone: info.phone,
@@ -470,6 +504,7 @@ export function registerHandlers() {
 
     ipcMain.handle('settings:save-clinic-info', (_, data) => {
         checkReadOnly();
+        verifyPermission('CLINIC_SETTINGS');
         try {
             console.log('[settings:save-clinic-info] Receiving:', {
                 name: data.name,
@@ -534,6 +569,7 @@ export function registerHandlers() {
 
     ipcMain.handle('settings:syncClinicInfo', (_, settings) => {
         checkReadOnly();
+        verifyPermission('CLINIC_SETTINGS');
         try {
             const existing = getDb().prepare('SELECT id FROM clinic_settings LIMIT 1').get() as any;
 
@@ -578,11 +614,20 @@ export function registerHandlers() {
     // generic insert helper for other tables to save code space
     ipcMain.handle('db:insert', (_, { table, data }) => {
         checkReadOnly();
+
+        // --- Permission Checks ---
+        if (table === 'patients') verifyPermission('ADD_PATIENT');
+        if (table === 'appointments') verifyPermission('ADD_APPOINTMENT');
+        if (table === 'invoices') verifyPermission('CREATE_INVOICE');
+        if (table === 'items' || table === 'inventory') verifyPermission('ADD_ITEM');
+        if (table === 'doctors' || table === 'services' || table === 'cities') verifyPermission('CLINIC_SETTINGS');
+        // -------------------------
+
         const id = randomUUID();
 
         // AUTO-INJECT CLINIC_ID Logic
         // Trusted tables that require clinic_id
-        const domainTables = ['cities', 'services', 'doctors', 'staff', 'appointments', 'invoices', 'treatment_cases', 'patients'];
+        const domainTables = ['cities', 'services', 'doctors', 'staff', 'appointments', 'invoices', 'treatment_cases', 'patients', 'attachments'];
 
         let finalData = { ...data };
 
@@ -608,10 +653,19 @@ export function registerHandlers() {
         const vals = [id, ...values];
         const phs = ['?', ...placeholders].join(',');
         try {
+            if (table === 'attachments' && finalData.patient_id) {
+                const pExists = getDb().prepare('SELECT id FROM patients WHERE id = ?').get(finalData.patient_id);
+                console.log(`[db:insert] Debug Attachment: Patient ${finalData.patient_id} exists? ${!!pExists}`);
+            }
+
             getDb().prepare(`INSERT INTO ${table} (${cols}) VALUES (${phs})`).run(...vals);
             return { data: { ...finalData, id }, error: null };
         } catch (err: any) {
-            console.error('[db:insert] Insert Error:', err);
+            console.error(`[db:insert] Insert Error (${table}):`, err);
+
+
+
+            // console.error('Payload:', JSON.stringify(finalData));
             return { data: null, error: err.message };
         }
     });
@@ -619,6 +673,11 @@ export function registerHandlers() {
     // generic update helper
     ipcMain.handle('db:update', (_, { table, id, data }) => {
         checkReadOnly();
+        // --- Permission Checks ---
+        if (table === 'patients') verifyPermission('EDIT_PATIENT');
+        if (table === 'appointments') verifyPermission('EDIT_APPOINTMENT');
+        if (table === 'doctors' || table === 'services' || table === 'cities' || table === 'clinic_settings') verifyPermission('CLINIC_SETTINGS');
+        // -------------------------
         const keys = Object.keys(data);
         const values = Object.values(data);
         const setClause = keys.map(k => `${k} = ?`).join(',');
@@ -632,7 +691,40 @@ export function registerHandlers() {
     // generic delete helper
     ipcMain.handle('db:delete', (_, { table, id }) => {
         checkReadOnly();
+
+        // --- Permission Checks ---
+        // --- Permission Checks ---
+        if (table === 'patients') verifyPermission('DELETE_PATIENT');
+        if (table === 'appointments') verifyPermission('DELETE_APPOINTMENT');
+        if (table === 'invoices') verifyPermission('CREATE_INVOICE'); // Assuming create implies manage/delete for invoices or add separate permission if needed
+        if (table === 'doctors' || table === 'services' || table === 'cities') verifyPermission('CLINIC_SETTINGS');
+        if (table === 'stock_items') verifyPermission('ADD_ITEM');
+        // -------------------------
+
+        // SPECIAL HANDLING: If deleting an expense, must reverse Lab Payments
+        if (table === 'expenses') {
+            try {
+                getDb().transaction(() => {
+                    // 1. Delete linked lab_payments (Detailed distribution)
+                    getDb().prepare('DELETE FROM lab_payments WHERE expense_id = ?').run(id);
+                    // 2. Delete linked lab_general_payments (The overall payment record)
+                    getDb().prepare('DELETE FROM lab_general_payments WHERE expense_id = ?').run(id);
+                })();
+            } catch (e) {
+                console.error('Failed to clean up lab payments for expense:', e);
+                // Continue to try deleting validation expense anyway? Or fail? 
+                // Better to throw if transaction failed to ensure consistency.
+                throw e;
+            }
+        }
+
         try {
+            // Soft Delete Handlers
+            if (['services', 'doctors', 'cities'].includes(table)) {
+                getDb().prepare(`UPDATE ${table} SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(id);
+                return { data: true, error: null };
+            }
+
             getDb().prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
             return { data: true, error: null };
         } catch (err: any) { return { data: null, error: err.message }; }
@@ -658,7 +750,7 @@ export function registerHandlers() {
             todayAppointments: 0
         };
 
-        const totalPatients = getDb().prepare("SELECT COUNT(*) as count FROM patients WHERE (clinic_id = ? OR clinic_id = 'clinic_001')").get(effectiveClinicId) as any;
+        const totalPatients = getDb().prepare("SELECT COUNT(*) as count FROM patients WHERE (clinic_id = ? OR clinic_id = 'clinic_001') AND (is_deleted IS NULL OR is_deleted = 0)").get(effectiveClinicId) as any;
         const totalAppointments = getDb().prepare("SELECT COUNT(*) as count FROM appointments WHERE (clinic_id = ? OR clinic_id = 'clinic_001')").get(effectiveClinicId) as any;
         const todayAppointments = getDb().prepare("SELECT COUNT(*) as count FROM appointments WHERE date = CURRENT_DATE AND (clinic_id = ? OR clinic_id = 'clinic_001')").get(effectiveClinicId) as any;
         return {
@@ -741,13 +833,91 @@ export function registerHandlers() {
         }
     });
 
-    // --- Complex Actions ---
+    // --- VCF Export ---
+    ipcMain.handle('patients:export-vcf', async (_, { months }) => {
+        try {
+            const ctx = getContext();
+            const clinicId = ctx?.clinicId;
+            if (!clinicId) throw new Error('No active clinic context found');
+
+            if (!months || !Array.isArray(months) || months.length === 0) {
+                return { success: false, error: 'No months selected' };
+            }
+
+            // Build query conditions dynamically
+            const conditions: string[] = [];
+            const params: any[] = [clinicId];
+
+            months.forEach((monthStr: string) => {
+                // monthStr format: YYYY-MM
+                const [year, month] = monthStr.split('-').map(Number);
+
+                // Calculate Start Date (First day of selected month)
+                // SQLite string format: YYYY-MM-DD HH:MM:SS
+                const startDate = `${year}-${String(month).padStart(2, '0')}-01 00:00:00`;
+
+                // Calculate End Date (First day of NEXT month)
+                let nextYear = year;
+                let nextMonth = month + 1;
+
+                if (nextMonth > 12) {
+                    nextMonth = 1;
+                    nextYear += 1;
+                }
+
+                const endDate = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01 00:00:00`;
+
+                // Condition: created_at >= Start AND created_at < End
+                conditions.push(`(created_at >= ? AND created_at < ?)`);
+                params.push(startDate, endDate);
+            });
+
+            // Combine with OR since we want patients from ANY of the selected months
+            const whereClause = conditions.length > 0 ? `AND (${conditions.join(' OR ')})` : '';
+
+            const query = `
+                SELECT full_name, phone 
+                FROM patients 
+                WHERE (clinic_id = ? OR clinic_id = 'clinic_001') 
+                ${whereClause}
+            `;
+
+            console.log('VCF Export Query:', query, params);
+            const patients = getDb().prepare(query).all(...params) as any[];
+
+            if (patients.length === 0) {
+                return { success: false, error: 'No patients found for selected months' };
+            }
+
+            // Generate VCF Content
+            const vcfContent = patients.map(p =>
+                `BEGIN:VCARD\nVERSION:3.0\nFN:${p.full_name}\nTEL:${p.phone}\nEND:VCARD`
+            ).join('\n');
+
+            // Save Dialog
+            const { canceled, filePath } = await dialog.showSaveDialog({
+                title: 'Save VCF Contacts',
+                defaultPath: `patients_${months.join('_')}.vcf`,
+                filters: [{ name: 'VCard', extensions: ['vcf'] }]
+            });
+
+            if (canceled || !filePath) {
+                return { success: false, cancelled: true };
+            }
+
+            fs.writeFileSync(filePath, vcfContent);
+            return { success: true, filePath };
+
+        } catch (error: any) {
+            console.error('VCF Export Error:', error);
+            return { success: false, error: error.message };
+        }
+    });
     ipcMain.handle('appointments:markAttended', (_, payload) => {
         checkReadOnly();
-        const ctx = getContext();
-        // Resolve clinic_id: from payload (if added in frontend) or context helper
-        // Assuming payload doesn't have it yet, we fallback to context.
-        const clinicId = ctx?.clinicId;
+        verifyPermission('CREATE_INVOICE'); // Attending creates an invoice
+        // Use consistent clinic ID resolution matching create/getAll
+        const clinicId = getCurrentClinicId();
         if (!clinicId) throw new Error('Action failed: Missing clinic context');
 
         const {
@@ -1487,6 +1657,62 @@ export function registerHandlers() {
         return backupService.getLastBackupDate();
     });
 
+    // --- Notifications ---
+    // --- Notifications ---
+    ipcMain.handle('notifications:get-all', async (_, { userId }) => {
+        const clinicId = getCurrentClinicId();
+        let allNotifications: any[] = [];
+
+        // 1. Local Notifications (Stock, System)
+        try {
+            const local = getDb().prepare(`
+                SELECT * FROM notifications 
+                WHERE clinic_id = ? 
+                ORDER BY created_at DESC 
+                LIMIT 50
+            `).all(clinicId) as any[];
+            allNotifications = [...local];
+        } catch (e) {
+            console.error('Local notifications error:', e);
+        }
+
+        // 2. Supabase Notifications (Cloud/Admin)
+        try {
+            const { data, error } = await supabase
+                .from('notifications')
+                .select('*')
+                .order('created_at', { ascending: false })
+                .limit(20);
+
+            if (!error && data) {
+                // Determine read status for cloud notifs (stored locally in localStorage on frontend usually, 
+                // but we might need a sync mechanism. For now, we return raw supbase data)
+                // We map supabase ID to avoid collision if UUIDs clash (unlikely)
+                // effectively merging arrays
+                allNotifications = [...allNotifications, ...data];
+            }
+        } catch (e) {
+            // Soft fail: User might be offline
+            console.warn('Supabase notifications skipped (offline/error):', e);
+        }
+
+        // 3. Sort merged list by Date DESC
+        allNotifications.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+        // 4. Return combined result
+        // We trim to reasonable limit (e.g. 50)
+        return { success: true, data: allNotifications.slice(0, 50) };
+    });
+
+    ipcMain.handle('notifications:mark-read', (_, { id }) => {
+        try {
+            getDb().prepare('UPDATE notifications SET is_read = 1 WHERE id = ?').run(id);
+            return { success: true };
+        } catch (e: any) {
+            return { success: false, error: e.message };
+        }
+    });
+
     // --- Expenses ---
     ipcMain.handle('expenses:get-all', () => {
         try {
@@ -1498,6 +1724,8 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('expenses:create', (_, { id, amount, date, category, description }) => {
+        checkReadOnly();
+        verifyPermission('ADD_EXPENSE');
         try {
             const stmt = getDb().prepare(`
                 INSERT INTO expenses (id, amount, date, category, description)
@@ -1511,6 +1739,8 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('expenses:update', (_, { id, amount, date, category, description }) => {
+        checkReadOnly();
+        verifyPermission('EDIT_EXPENSE');
         try {
             const stmt = getDb().prepare(`
                 UPDATE expenses 
@@ -1525,13 +1755,186 @@ export function registerHandlers() {
     });
 
     ipcMain.handle('expenses:delete', (_, { id }) => {
+        checkReadOnly();
+        verifyPermission('DELETE_EXPENSE');
         try {
-            getDb().prepare('DELETE FROM expenses WHERE id = ?').run(id);
+            getDb().transaction(() => {
+                // 1. Delete linked lab_payments (Detailed distribution)
+                getDb().prepare('DELETE FROM lab_payments WHERE expense_id = ?').run(id);
+                // 2. Delete linked lab_general_payments (The overall payment record)
+                getDb().prepare('DELETE FROM lab_general_payments WHERE expense_id = ?').run(id);
+
+                // 3. Delete the expense itself
+                getDb().prepare('DELETE FROM expenses WHERE id = ?').run(id);
+            })();
             return { success: true };
         } catch (error: any) {
+            console.error('[expenses:delete] Error:', error);
             return { success: false, error: error.message };
         }
     });
 
 
+
+    // --- Stock / Inventory Management ---
+    ipcMain.handle('stock:get-items', () => {
+        try {
+            const clinicId = getCurrentClinicId();
+            return getDb().prepare(`
+                SELECT si.*, sc.name as category_name
+                FROM stock_items si
+                LEFT JOIN stock_categories sc ON si.category_id = sc.id
+                WHERE si.clinic_id = ?
+                ORDER BY si.name ASC
+            `).all(clinicId);
+        } catch (e: any) {
+            console.error('[stock:get-items] Error:', e);
+            return [];
+        }
+    });
+
+    ipcMain.handle('stock:add-item', (_, data) => {
+        checkReadOnly();
+        verifyPermission('ADD_ITEM');
+        try {
+            const clinicId = getCurrentClinicId();
+            const stmt = getDb().prepare(`
+                INSERT INTO stock_items (clinic_id, name, quantity, min_quantity, category_id)
+                VALUES (?, ?, ?, ?, ?)
+            `);
+            const info = stmt.run(clinicId, data.name, data.quantity || 0, data.min_quantity || 0, data.category_id || null);
+            return { success: true, id: info.lastInsertRowid };
+        } catch (e: any) {
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('stock:update-item', (_, { id, name, min_quantity }) => {
+        checkReadOnly();
+        verifyPermission('ADD_ITEM'); // Using ADD_ITEM as general inventory management permission
+        try {
+            const stmt = getDb().prepare(`
+                UPDATE stock_items 
+                SET name = ?, min_quantity = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            `);
+            stmt.run(name, min_quantity, id);
+            return { success: true };
+        } catch (e: any) {
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('stock:subtract-item', (_, { id, amount, reason }) => {
+        checkReadOnly();
+        verifyPermission('SUBTRACT_ITEM');
+        try {
+            const clinicId = getCurrentClinicId();
+            const transaction = getDb().transaction(() => {
+                // 1. Subtract
+                getDb().prepare(`
+                    UPDATE stock_items 
+                    SET quantity = quantity - ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                `).run(amount, id);
+
+                // 2. Record Movement
+                getDb().prepare(`
+                    INSERT INTO stock_movements (clinic_id, item_id, change, reason)
+                    VALUES (?, ?, ?, ?)
+                `).run(clinicId, id, -amount, reason);
+
+                // 3. Check for Low Stock & Notify
+                const item = getDb().prepare('SELECT name, quantity, min_quantity FROM stock_items WHERE id = ?').get(id) as any;
+                if (item) {
+                    const msgPart = `كمية الصنف "${item.name}"`;
+
+                    if (item.quantity <= item.min_quantity) {
+                        // Low Stock Logic (Create Notification)
+                        const exists = getDb().prepare("SELECT id FROM notifications WHERE message LIKE ? AND is_read = 0").get(`%${msgPart}%`);
+
+                        if (!exists) {
+                            const notifId = randomUUID();
+                            const now = new Date().toISOString();
+                            getDb().prepare(`
+                                INSERT INTO notifications (id, clinic_id, title, message, type, link, created_at)
+                                VALUES (?, ?, ?, ?, 'warning', '/stock', ?)
+                            `).run(notifId, clinicId, 'تنبيه مخزون منخفض', `${msgPart} وصلت إلى ${item.quantity} (الحد الأدنى: ${item.min_quantity})`, now);
+                        }
+                    } else {
+                        // Stock Recovered Logic (Resolve Notification)
+                        console.log(`Checking recovery for item: ${item.name} (Qty: ${item.quantity}, Min: ${item.min_quantity})`);
+
+                        // We DELETE the notification because the "low stock" situation is no longer valid.
+                        // Marking as read is okay, but deleting cleans up the "Alert" status completely.
+                        // We match ANY unread warning about this item.
+                        const deleteResult = getDb().prepare("DELETE FROM notifications WHERE message LIKE ? AND is_read = 0").run(`%${msgPart}%`);
+                        console.log(`Recovery: Deleted ${deleteResult.changes} notifications for ${item.name}`);
+                    }
+                }
+            });
+            transaction();
+            return { success: true };
+        } catch (e: any) {
+            return { success: false, error: e.message };
+        }
+    });
+
+
+
+
+
+
+
+
+    // For Report
+    ipcMain.handle('stock:get-movements', (_, { startDate, endDate }) => {
+        checkReadOnly();
+        // Return movements joined with item names
+        return getDb().prepare(`
+            SELECT sm.*, si.name as item_name 
+            FROM stock_movements sm
+            JOIN stock_items si ON sm.item_id = si.id
+            WHERE sm.created_at BETWEEN ? AND ?
+            ORDER BY sm.created_at DESC
+        `).all(startDate + ' 00:00:00', endDate + ' 23:59:59');
+    });
+
+    // --- Stock Categories ---
+    ipcMain.handle('stock:get-categories', () => {
+        try {
+            const clinicId = getCurrentClinicId();
+            return getDb().prepare("SELECT * FROM stock_categories WHERE clinic_id = ? ORDER BY name ASC").all(clinicId);
+        } catch (e: any) {
+            console.error('[stock:get-categories] Error:', e);
+            return [];
+        }
+    });
+
+    ipcMain.handle('stock:create-category', (_, { name }) => {
+        checkReadOnly();
+        verifyPermission('ADD_ITEM');
+        try {
+            const clinicId = getCurrentClinicId();
+            const id = randomUUID();
+            getDb().prepare("INSERT INTO stock_categories (id, clinic_id, name) VALUES (?, ?, ?)").run(id, clinicId, name);
+            return { success: true, id };
+        } catch (e: any) {
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('stock:delete-category', (_, { id }) => {
+        checkReadOnly();
+        verifyPermission('ADD_ITEM');
+        try {
+            // Check if used? Maybe just let items have null category
+            getDb().prepare("UPDATE stock_items SET category_id = NULL WHERE category_id = ?").run(id);
+            getDb().prepare("DELETE FROM stock_categories WHERE id = ?").run(id);
+            return { success: true };
+        } catch (e: any) {
+            return { success: false, error: e.message };
+        }
+    });
 }
+

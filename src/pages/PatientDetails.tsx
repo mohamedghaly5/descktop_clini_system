@@ -50,15 +50,18 @@ import {
   PatientAttachment,
   getPatientById,
   updatePatient,
-  softDeletePatient,
+  deletePatient,
+  DeletePatientOptions,
   getPatientStats,
   getAttachmentsByPatientId,
   createAttachment,
   deleteAttachment,
 } from '@/services/patientService';
+import { db } from '@/services/db';
 import { createTreatmentCase, deleteTreatmentCase } from '@/services/appointmentService';
 import { toast } from '@/hooks/use-toast';
 import { formatDate } from '@/utils/format';
+import { DeletePatientDialog, DeletePatientStats } from '@/components/patients/DeletePatientDialog';
 
 // Helper to get patient name
 const getPatientName = (patient: Patient) => {
@@ -70,13 +73,14 @@ const PatientDetailsPage: React.FC = () => {
   const navigate = useNavigate();
   const { language, isRTL, t } = useLanguage();
   const { cities, formatCurrency } = useSettings();
-  const { user } = useAuth();
+  const { user, hasPermission } = useAuth();
 
   const [patient, setPatient] = useState<Patient | null>(null);
   const [stats, setStats] = useState<Awaited<ReturnType<typeof getPatientStats>> | null>(null);
   const [attachments, setAttachments] = useState<PatientAttachment[]>([]);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteStats, setDeleteStats] = useState<DeletePatientStats>({ appointmentsCount: 0, invoicesCount: 0, treatmentCasesCount: 0 });
   const [newPlanDialogOpen, setNewPlanDialogOpen] = useState(false);
   const [newPlanData, setNewPlanData] = useState({ name: '', cost: '' });
   const [isSubmittingPlan, setIsSubmittingPlan] = useState(false);
@@ -149,17 +153,35 @@ const PatientDetailsPage: React.FC = () => {
     }
   };
 
-  const handleDelete = async () => {
+  const handleDelete = async (options: DeletePatientOptions) => {
     if (!id) return;
 
-    if (await softDeletePatient(id)) {
+    const success = await deletePatient(id, options);
+    if (success) {
       toast({
         title: language === 'ar' ? 'تم الحذف' : 'Deleted',
         description: language === 'ar' ? 'تم حذف المريض بنجاح' : 'Patient deleted successfully',
       });
       navigate('/patients');
+    } else {
+      toast({
+        title: language === 'ar' ? 'خطأ' : 'Error',
+        description: language === 'ar' ? 'فشل حذف المريض' : 'Failed to delete patient',
+        variant: 'destructive',
+      });
     }
+    setDeleteDialogOpen(false);
   };
+
+  // Fetch delete stats when dialog opens
+  useEffect(() => {
+    if (deleteDialogOpen && id) {
+      db.patients.getStatsForDelete(id).then(setDeleteStats).catch(console.error);
+    }
+  }, [deleteDialogOpen, id]);
+
+  // Prepare stats for delete dialog
+  const deleteDialogStats: DeletePatientStats = deleteStats;
 
   const handleCreatePlan = async () => {
     if (!newPlanData.name || !newPlanData.cost) {
@@ -181,7 +203,7 @@ const PatientDetailsPage: React.FC = () => {
         nameAr: newPlanData.name,
         totalCost: parseFloat(newPlanData.cost),
         totalPaid: 0,
-        totalPaid: 0,
+
         balance: parseFloat(newPlanData.cost),
         status: 'active'
       }, user?.email);
@@ -206,6 +228,7 @@ const PatientDetailsPage: React.FC = () => {
   };
 
   const handleDeletePlan = async (planId: string) => {
+    if (!hasPermission('DELETE_TREATMENT')) return;
     if (!confirm(language === 'ar' ? 'هل أنت متأكد من حذف هذه الخطة؟' : 'Are you sure you want to delete this plan?')) return;
 
     try {
@@ -241,25 +264,36 @@ const PatientDetailsPage: React.FC = () => {
   };
 
   const handleUploadSubmit = async () => {
-    if (!id || !uploadForm.fileUrl) return;
+    if (!patient || !id || !uploadForm.fileUrl) return;
 
-    await createAttachment({
-      patientId: id,
-      fileName: uploadForm.fileName,
-      fileUrl: uploadForm.fileUrl,
-      fileType: uploadForm.fileType,
-      notes: uploadForm.notes,
-      uploadDate: new Date().toISOString(),
-    });
+    try {
+      console.log('Uploading attachment. URL ID:', id, 'DB ID:', patient.id);
 
-    setAttachments(await getAttachmentsByPatientId(id));
-    setUploadDialogOpen(false);
-    setUploadForm({ fileUrl: '', fileName: '', fileType: 'xray', notes: '' });
+      await createAttachment({
+        patientId: patient.id, // Use ID from loaded patient object to ensure DB consistency
+        fileName: uploadForm.fileName,
+        fileUrl: uploadForm.fileUrl,
+        fileType: uploadForm.fileType,
+        notes: uploadForm.notes,
+        uploadDate: new Date().toISOString(),
+      });
 
-    toast({
-      title: language === 'ar' ? 'تم الرفع' : 'Uploaded',
-      description: language === 'ar' ? 'تم رفع المرفق بنجاح' : 'Attachment uploaded successfully',
-    });
+      setAttachments(await getAttachmentsByPatientId(id));
+      setUploadDialogOpen(false);
+      setUploadForm({ fileUrl: '', fileName: '', fileType: 'xray', notes: '' });
+
+      toast({
+        title: language === 'ar' ? 'تم الرفع' : 'Uploaded',
+        description: language === 'ar' ? 'تم رفع المرفق بنجاح' : 'Attachment uploaded successfully',
+      });
+    } catch (error: any) {
+      console.error('Upload failed:', error);
+      toast({
+        title: language === 'ar' ? 'خطأ' : 'Error',
+        description: language === 'ar' ? 'فشل رفع المرفق: ' + error.message : 'Upload failed: ' + error.message,
+        variant: 'destructive',
+      });
+    }
   };
 
   const handleDeleteAttachment = async (attachmentId: string) => {
@@ -348,14 +382,18 @@ const PatientDetailsPage: React.FC = () => {
               {language === 'ar' ? 'مراسلة واتساب' : 'WhatsApp Chat'}
             </Button>
           )}
-          <Button variant="outline" onClick={() => setEditDialogOpen(true)}>
-            <Edit className="w-4 h-4" />
-            {language === 'ar' ? 'تعديل' : 'Edit'}
-          </Button>
-          <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
-            <Trash2 className="w-4 h-4" />
-            {language === 'ar' ? 'حذف' : 'Delete'}
-          </Button>
+          {hasPermission('EDIT_PATIENT') && (
+            <Button variant="outline" onClick={() => setEditDialogOpen(true)}>
+              <Edit className="w-4 h-4" />
+              {language === 'ar' ? 'تعديل' : 'Edit'}
+            </Button>
+          )}
+          {hasPermission('DELETE_PATIENT') && (
+            <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
+              <Trash2 className="w-4 h-4" />
+              {language === 'ar' ? 'حذف' : 'Delete'}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -558,6 +596,7 @@ const PatientDetailsPage: React.FC = () => {
                     variant="outline"
                     className="h-8 gap-1"
                     onClick={() => setNewPlanDialogOpen(true)}
+                    disabled={!hasPermission('ADD_TREATMENT')}
                   >
                     <Plus className="w-3 h-3" />
                     {language === 'ar' ? 'خطة جديدة' : 'New Plan'}
@@ -608,6 +647,7 @@ const PatientDetailsPage: React.FC = () => {
                         size="icon"
                         className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
                         onClick={() => handleDeletePlan(tc.id)}
+                        disabled={!hasPermission('DELETE_TREATMENT')}
                       >
                         <Trash2 className="w-4 h-4" />
                       </Button>
@@ -640,6 +680,7 @@ const PatientDetailsPage: React.FC = () => {
                 variant="outline"
                 onClick={() => setUploadDialogOpen(true)}
                 className="mb-4"
+                disabled={!hasPermission('UPLOAD_XRAY')}
               >
                 <Upload className="w-4 h-4" />
                 {language === 'ar' ? 'رفع صورة / أشعة' : 'Upload Image / X-ray'}
@@ -666,16 +707,18 @@ const PatientDetailsPage: React.FC = () => {
                         className="w-full h-32 object-cover"
                       />
                       <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteAttachment(attachment.id);
-                          }}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
+                        {hasPermission('DELETE_ATTACHMENT') && (
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteAttachment(attachment.id);
+                            }}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        )}
                       </div>
                       <div className="p-2 bg-background">
                         <p className="text-xs truncate">{attachment.fileName}</p>
@@ -784,25 +827,7 @@ const PatientDetailsPage: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{language === 'ar' ? 'حذف المريض' : 'Delete Patient'}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {language === 'ar'
-                ? 'هل أنت متأكد من حذف هذا المريض؟ سيتم إخفاؤه من القائمة ولكن ستظل سجلاته محفوظة.'
-                : 'Are you sure you want to delete this patient? They will be hidden from the list but their records will be preserved.'}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{language === 'ar' ? 'إلغاء' : 'Cancel'}</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              {language === 'ar' ? 'حذف' : 'Delete'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* Delete Patient Dialog is rendered at the end of the file using DeletePatientDialog component */}
 
       {/* Upload Dialog */}
       <Dialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen}>
@@ -915,6 +940,15 @@ const PatientDetailsPage: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Patient Dialog */}
+      <DeletePatientDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        patientName={patient ? getPatientName(patient) : ''}
+        stats={deleteDialogStats}
+        onConfirm={handleDelete}
+      />
     </div >
   );
 };

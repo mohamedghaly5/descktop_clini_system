@@ -30,6 +30,7 @@ import { cn } from "@/lib/utils";
 import { useLanguage } from '@/contexts/LanguageContext';
 import { toast } from 'sonner';
 import { getLabServices, createLabOrder, LabService, getLabs, Lab } from '@/services/labService';
+import { db } from '@/services/db';
 
 interface LabOrderDialogProps {
     open: boolean;
@@ -53,7 +54,6 @@ const LabOrderDialog: React.FC<LabOrderDialogProps> = ({ open, onOpenChange, onS
         doctor_id: '',
         lab_service_id: '',
         sent_date: new Date().toISOString().split('T')[0],
-        expected_receive_date: '',
         total_lab_cost: 0,
         notes: ''
     });
@@ -84,13 +84,11 @@ const LabOrderDialog: React.FC<LabOrderDialogProps> = ({ open, onOpenChange, onS
             }
 
             // Fetch Patients
-            // @ts-ignore
-            const fetchedPatients = await window.electron.ipcRenderer.invoke('patients:getAll');
+            const fetchedPatients = await db.patients.getAll();
             setPatients(fetchedPatients || []);
 
             // Fetch Doctors
-            // @ts-ignore
-            const fetchedDoctors = await window.electron.ipcRenderer.invoke('doctors:getAll');
+            const fetchedDoctors = await db.doctors.getAll();
             setDoctors(fetchedDoctors || []);
         } catch (error) {
             console.error(error);
@@ -129,11 +127,11 @@ const LabOrderDialog: React.FC<LabOrderDialogProps> = ({ open, onOpenChange, onS
                 onOpenChange(false);
                 // Reset form
                 setFormData({
+                    lab_id: '',
                     patient_id: '',
                     doctor_id: '',
                     lab_service_id: '',
                     sent_date: new Date().toISOString().split('T')[0],
-                    expected_receive_date: '',
                     total_lab_cost: 0,
                     notes: ''
                 });
@@ -280,14 +278,6 @@ const LabOrderDialog: React.FC<LabOrderDialogProps> = ({ open, onOpenChange, onS
                                 value={formData.sent_date}
                                 onChange={(e) => setFormData(prev => ({ ...prev, sent_date: e.target.value }))}
                                 required
-                            />
-                        </div>
-                        <div className="grid gap-2">
-                            <Label>{t('lab.dialog.expectedDate')}</Label>
-                            <Input
-                                type="date"
-                                value={formData.expected_receive_date}
-                                onChange={(e) => setFormData(prev => ({ ...prev, expected_receive_date: e.target.value }))}
                             />
                         </div>
                     </div>

@@ -1,5 +1,29 @@
 import React, { useState } from 'react';
-import { Globe, Building2, DollarSign, MapPin, Briefcase, Plus, Trash2, Edit2, Stethoscope, UserCheck, UserX, Percent, Upload, Key, FlaskConical, KeyRound } from 'lucide-react';
+import axios from 'axios';
+import { db } from '@/services/db';
+import {
+  Globe,
+  Building2,
+  DollarSign,
+  MapPin,
+  Briefcase,
+  Plus,
+  Trash2,
+  Edit2,
+  Stethoscope,
+  UserCheck,
+  UserX,
+  Percent,
+  Upload,
+  Key,
+  FlaskConical,
+  KeyRound,
+  Settings as SettingsIcon,
+  ShieldCheck,
+  Save,
+  ArrowRight,
+  UserCircle
+} from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -27,6 +51,7 @@ import { toast } from 'sonner';
 
 import { UpdateCard } from '@/components/features/settings/update-card';
 import LicenseSettings from './LicenseSettings';
+import UserManagementTab from '@/components/settings/UserManagementTab';
 import BackupSettings from '@/components/BackupSettings';
 import LabServicesSettings from '@/components/settings/LabServicesSettings';
 import ChangePinDialog from '@/components/auth/ChangePinDialog';
@@ -45,10 +70,9 @@ const CURRENCY_OPTIONS = [
 
 const SettingsPage: React.FC = () => {
   const { t, isRTL, language, setLanguage } = useLanguage();
-  const { user } = useAuth();
+  const { user, hasPermission } = useAuth();
+  const canEditSettings = hasPermission('CLINIC_SETTINGS');
 
-  // NOTE: Context Removed. Logic is now local.
-  // We manage 'currency' and 'clinicInfo' via local state + IPC
   const [currency, setCurrency] = useState('EGP');
   const [clinicInfo, setClinicInfo] = useState<any>({
     name: '', ownerName: '', phone: '', email: '', whatsappNumber: '',
@@ -63,7 +87,7 @@ const SettingsPage: React.FC = () => {
   const [editingCity, setEditingCity] = useState<City | null>(null);
   const [editingDoctor, setEditingDoctor] = useState<Doctor | null>(null);
 
-  // Form states - simplified to single name fields
+  // Form states
   const [serviceForm, setServiceForm] = useState({ name: '', defaultPrice: 0 });
   const [cityForm, setCityForm] = useState({ name: '' });
   const [doctorForm, setDoctorForm] = useState({
@@ -94,26 +118,17 @@ const SettingsPage: React.FC = () => {
     let success = false;
     try {
       if (editingService) {
-        // Update
-        const res = await window.electron.ipcRenderer.invoke('db:update', {
-          table: 'services',
-          id: editingService.id,
-          data: {
-            name: serviceForm.name,
-            default_price: parseFloat(serviceForm.defaultPrice.toString()) || 0
-          }
+        const res = await db.services.update(editingService.id, {
+          name: serviceForm.name,
+          default_price: parseFloat(serviceForm.defaultPrice.toString()) || 0
         });
-        success = !res.error;
+        success = !res?.error;
       } else {
-        // Create
-        const res = await window.electron.ipcRenderer.invoke('db:insert', {
-          table: 'services',
-          data: {
-            name: serviceForm.name,
-            default_price: parseFloat(serviceForm.defaultPrice.toString()) || 0
-          }
+        const res = await db.services.create({
+          name: serviceForm.name,
+          default_price: parseFloat(serviceForm.defaultPrice.toString()) || 0
         });
-        success = !res.error;
+        success = !res?.error;
       }
     } catch (e) {
       console.error(e);
@@ -130,12 +145,20 @@ const SettingsPage: React.FC = () => {
   };
 
   const handleDeleteService = async (id: string) => {
+    if (!canEditSettings) {
+      toast.error(language === 'ar' ? 'ليس لديك صلاحية' : 'Permission denied');
+      return;
+    }
+    if (!confirm(language === 'ar' ? 'هل أنت متأكد من حذف هذه الخدمة؟' : 'Are you sure you want to delete this service?')) return;
     try {
-      await window.electron.ipcRenderer.invoke('db:delete', { table: 'services', id });
+      const res = await db.services.delete(id);
+      if (res?.error) throw new Error(res.error);
+
       toast.success(language === 'ar' ? 'تم حذف الخدمة' : 'Service deleted');
       fetchLocalLists();
-    } catch (e) {
-      toast.error('Error deleting');
+    } catch (e: any) {
+      console.error(e);
+      toast.error(language === 'ar' ? 'حدث خطأ أثناء الحذف' : 'Error deleting');
     }
   };
 
@@ -160,18 +183,11 @@ const SettingsPage: React.FC = () => {
     let success = false;
     try {
       if (editingCity) {
-        const res = await window.electron.ipcRenderer.invoke('db:update', {
-          table: 'cities',
-          id: editingCity.id,
-          data: { name: cityForm.name }
-        });
-        success = !res.error;
+        const res = await db.cities.update(editingCity.id, { name: cityForm.name });
+        success = !res?.error;
       } else {
-        const res = await window.electron.ipcRenderer.invoke('db:insert', {
-          table: 'cities',
-          data: { name: cityForm.name }
-        });
-        success = !res.error;
+        const res = await db.cities.create({ name: cityForm.name });
+        success = !res?.error;
       }
     } catch (e) { success = false; }
 
@@ -185,11 +201,18 @@ const SettingsPage: React.FC = () => {
   };
 
   const handleDeleteCity = async (id: string) => {
+    if (!canEditSettings) return;
+    if (!confirm(language === 'ar' ? 'هل أنت متأكد؟' : 'Are you sure?')) return;
+
     try {
-      await window.electron.ipcRenderer.invoke('db:delete', { table: 'cities', id });
+      const res = await db.cities.delete(id);
+      if (res?.error) throw new Error(res.error);
+
       toast.success(language === 'ar' ? 'تم الحذف' : 'Deleted');
       fetchLocalLists();
-    } catch (e) { }
+    } catch (e: any) {
+      toast.error(language === 'ar' ? 'حدث خطأ' : 'Error');
+    }
   };
 
   // Handlers for Doctors
@@ -210,20 +233,27 @@ const SettingsPage: React.FC = () => {
     setDoctorDialogOpen(true);
   };
 
-  // Clinic Info Local State (for smooth typing)
+  // Clinic Info Local State
   const [localClinicInfo, setLocalClinicInfo] = useState(clinicInfo);
   const [isSaving, setIsSaving] = useState(false);
-  const [localStaff, setLocalStaff] = useState<Doctor[]>([]); // New local state for staff
-  const [localServices, setLocalServices] = useState<Service[]>([]); // Local state for services
-  const [localCities, setLocalCities] = useState<City[]>([]); // Local state for cities
+  const [localStaff, setLocalStaff] = useState<Doctor[]>([]);
+  const [localServices, setLocalServices] = useState<Service[]>([]);
+  const [localCities, setLocalCities] = useState<City[]>([]);
 
   const [isReadOnly, setIsReadOnly] = useState(false);
+  const [isClientMode, setIsClientMode] = useState(false);
 
   const checkSystemStatus = async () => {
     try {
       // @ts-ignore
-      const status = await window.api.getSystemStatus();
-      setIsReadOnly(!!status?.isReadOnly);
+      if ((window as any).api && (window as any).api.getSystemStatus) {
+        // @ts-ignore
+        const status = await window.api.getSystemStatus();
+        setIsReadOnly(!!status?.isReadOnly);
+        if (status && status.mode === 'client') setIsClientMode(true);
+      } else {
+        setIsClientMode(true);
+      }
     } catch (e) {
       console.error("Failed to check system status", e);
     }
@@ -231,9 +261,7 @@ const SettingsPage: React.FC = () => {
 
   const fetchStaff = async () => {
     try {
-      // Direct IPC call, robust against missing email
-      // @ts-ignore
-      const result = await window.electron.ipcRenderer.invoke('staff:get-all');
+      const result = await db.doctors.getAll();
       if (Array.isArray(result)) {
         setLocalStaff(result.map((d: any) => ({
           id: d.id,
@@ -251,16 +279,11 @@ const SettingsPage: React.FC = () => {
 
   const fetchLocalLists = async () => {
     try {
-      // Fetch Services
-      // @ts-ignore
-      const sResult = await window.electron.ipcRenderer.invoke('services:getAll');
+      const sResult = await db.services.getAll();
       if (Array.isArray(sResult)) {
         setLocalServices(sResult.map((s: any) => ({ id: s.id, name: s.name, defaultPrice: s.default_price })));
       }
-
-      // Fetch Cities
-      // @ts-ignore
-      const cResult = await window.electron.ipcRenderer.invoke('cities:getAll');
+      const cResult = await db.cities.getAll();
       if (Array.isArray(cResult)) {
         setLocalCities(cResult.map((c: any) => ({ id: c.id, name: c.name })));
       }
@@ -269,35 +292,32 @@ const SettingsPage: React.FC = () => {
     }
   };
 
-  // Initial Fetch
   React.useEffect(() => {
     checkSystemStatus();
     fetchStaff();
     fetchLocalLists();
   }, []);
 
-  // Sync local state when context data arrives
   React.useEffect(() => {
     setLocalClinicInfo(clinicInfo);
   }, [clinicInfo]);
 
-  // FIX: Load from Local DB on mount to ensure data exists even if Context is slow/blocked
   React.useEffect(() => {
     const loadLocalData = async () => {
       try {
-        const response = await window.electron.ipcRenderer.invoke('settings:getClinicInfo');
-        if (response && response.data) {
-          const dbData = response.data;
-          setLocalClinicInfo(prev => ({
+        let dbData = null;
+        const response = await db.settings.getClinicInfo();
+        dbData = (response && response.data) ? response.data : response;
+
+        if (dbData) {
+          setLocalClinicInfo((prev: any) => ({
             ...prev,
-            // Map DB snake_case to CamelCase
             name: dbData.clinic_name || prev.name || '',
             ownerName: dbData.owner_name || prev.ownerName || '',
             address: dbData.address || prev.address || '',
             phone: dbData.phone || prev.phone || '',
             whatsappNumber: dbData.whatsapp_number || prev.whatsappNumber || '',
             logo: dbData.clinic_logo || prev.logo || '',
-            // Keep email from Auth (prev.email) if available, else DB
             email: prev.email || dbData.email || ''
           }));
         }
@@ -319,23 +339,18 @@ const SettingsPage: React.FC = () => {
       role: doctorForm.role || 'doctor',
       commission_type: doctorForm.commissionType || 'percentage',
       commission_value: isNaN(Number(doctorForm.commissionValue)) ? 0 : Number(doctorForm.commissionValue),
-      active: 1 // Send as integer 1 for SQLite
+      active: 1
     };
 
     try {
       if (editingDoctor) {
-        const res = await window.electron.ipcRenderer.invoke('db:update', {
-          table: 'doctors',
-          id: editingDoctor.id,
-          data: docData
-        });
-        success = !res.error;
+        const res = await db.doctors.update(editingDoctor.id, docData);
+        if (res?.error) console.error("Update doctor failed:", res.error);
+        success = !res?.error;
       } else {
-        const res = await window.electron.ipcRenderer.invoke('db:insert', {
-          table: 'doctors',
-          data: docData
-        });
-        success = !res.error;
+        const res = await db.doctors.create(docData);
+        if (res?.error) console.error("Insert doctor failed:", res.error);
+        success = !res?.error;
       }
     } catch (e) { console.error(e); }
 
@@ -348,30 +363,15 @@ const SettingsPage: React.FC = () => {
     }
   };
 
-  const handleToggleDoctorActive = async (id: string, currentActive: boolean) => {
-    try {
-      await window.electron.ipcRenderer.invoke('db:update', {
-        table: 'doctors',
-        id,
-        data: { active: !currentActive }
-      });
-      fetchStaff();
-      toast.success(language === 'ar' ? 'تم التحديث' : 'Updated');
-    } catch (e) { console.error(e); }
-  };
-
   const handleDeleteDoctor = async (id: string) => {
     if (!confirm(language === 'ar' ? 'هل أنت متأكد من حذف هذا الطبيب؟' : 'Are you sure you want to delete this doctor?')) return;
     try {
-      // Soft Delete: Set is_deleted = 1
-      await window.electron.ipcRenderer.invoke('db:update', {
-        table: 'doctors',
-        id,
-        data: { is_deleted: 1 }
-      });
+      const res = await db.doctors.delete(id);
+      if (res?.error) throw new Error(res.error);
+
       fetchStaff();
       toast.success(language === 'ar' ? 'تم الحذف بنجاح' : 'Deleted successfully');
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
       toast.error(language === 'ar' ? 'حدث خطأ أثناء الحذف' : 'Error deleting');
     }
@@ -380,18 +380,14 @@ const SettingsPage: React.FC = () => {
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 2 * 1024 * 1024) { // 2MB
+      if (file.size > 2 * 1024 * 1024) {
         toast.error(language === 'ar' ? 'حجم الصورة يجب أن لا يتعدى 2 ميجابايت' : 'Image size must be less than 2MB');
         return;
       }
-
       const reader = new FileReader();
       reader.onloadend = () => {
         const base64String = reader.result as string;
-        // CORRECT FIX: Update local form state (localClinicInfo), NOT the synced state (setClinicInfo)
-        // Updating `setClinicInfo` triggers a `useEffect` that overwrites `localClinicInfo` with old data, causing the reset.
         setLocalClinicInfo((prev: any) => ({ ...prev, logo: base64String }));
-
         toast.info(language === 'ar' ? 'اضغط حفظ التعديلات لتأكيد الشعار' : 'Click Save Changes to confirm logo');
       };
       reader.readAsDataURL(file);
@@ -407,24 +403,17 @@ const SettingsPage: React.FC = () => {
     }
   };
 
-  // Generic handler for local updates
   const handleClinicInfoChange = (field: keyof typeof localClinicInfo, value: string) => {
-    setLocalClinicInfo(prev => ({ ...prev, [field]: value }));
+    setLocalClinicInfo((prev: any) => ({ ...prev, [field]: value }));
   };
 
-  // Use Context for GLOBAL updates (Sidebar etc)
   const { updateClinicInfo } = useSettings();
 
   const handleSaveChanges = async () => {
     setIsSaving(true);
     try {
-      // 1. Update Global Context & Persist to DB via Context
-      // This ensures Sidebar and other components update immediately
       await updateClinicInfo(localClinicInfo);
-
-      // 2. Refresh local data to be sure (optional, but good for consistency)
       setClinicInfo({ ...localClinicInfo });
-
       toast.success(language === 'ar' ? 'تم تحديث بيانات العيادة بنجاح' : 'Clinic info updated successfully');
     } catch (error) {
       console.error(error);
@@ -434,541 +423,419 @@ const SettingsPage: React.FC = () => {
     }
   };
 
+  // Helper for Tab Triggers with Icons
+  const TabTriggerItem = ({ value, icon: Icon, label }: { value: string, icon: any, label: string }) => (
+    <TabsTrigger
+      value={value}
+      className="flex items-center gap-2 px-4 py-2.5 rounded-xl data-[state=active]:bg-gradient-to-r data-[state=active]:from-indigo-500 data-[state=active]:to-purple-500 data-[state=active]:text-white transition-all duration-300"
+    >
+      <Icon className="w-4 h-4" />
+      <span className="hidden sm:inline font-medium">{label}</span>
+    </TabsTrigger>
+  );
+
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="text-start">
-        <h1 className="text-2xl font-bold text-foreground">{t('settings')}</h1>
-        <p className="text-muted-foreground">
-          {language === 'ar' ? 'إدارة إعدادات التطبيق' : 'Manage application settings'}
-        </p>
+    <div className="container mx-auto p-4 md:p-6 space-y-6 animate-fade-in pb-20 bg-gradient-to-br from-indigo-50/50 to-purple-50/50 dark:from-gray-900 dark:to-gray-800 min-h-screen rounded-3xl">
+
+      {/* Premium Header */}
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 bg-card/50 p-6 rounded-2xl border backdrop-blur-sm">
+        <div className="flex items-center gap-4">
+          <div className="p-3 rounded-2xl bg-gradient-to-br from-indigo-500/10 to-purple-500/10 text-indigo-600 ring-1 ring-indigo-500/20 shadow-sm">
+            <SettingsIcon className="w-8 h-8" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-foreground">{t('settings')}</h1>
+            <p className="text-sm text-muted-foreground">
+              {language === 'ar' ? 'إدارة إعدادات التطبيق الكاملة' : 'Manage full application settings'}
+            </p>
+          </div>
+        </div>
+
+        {/* App Info Badge */}
+        <div className="bg-background/50 px-4 py-2 rounded-xl text-xs text-muted-foreground border">
+          v1.0.6
+        </div>
       </div>
 
       <Tabs defaultValue="general" className="space-y-6" dir={language === 'ar' ? 'rtl' : 'ltr'}>
-        <TabsList className="flex flex-wrap h-auto w-full justify-start gap-2 bg-muted/50 p-2 lg:w-fit">
-          <TabsTrigger value="general" className="flex-1 lg:flex-none flex items-center gap-2 px-4">
-            <Globe className="w-4 h-4" />
-            <span className="hidden sm:inline">{language === 'ar' ? 'عام' : 'General'}</span>
-          </TabsTrigger>
-          <TabsTrigger value="clinic" className="flex-1 lg:flex-none flex items-center gap-2 px-4">
-            <Building2 className="w-4 h-4" />
-            <span className="hidden sm:inline">{language === 'ar' ? 'العيادة' : 'Clinic'}</span>
-          </TabsTrigger>
-          <TabsTrigger value="doctors" className="flex-1 lg:flex-none flex items-center gap-2 px-4">
-            <Stethoscope className="w-4 h-4" />
-            <span className="hidden sm:inline">{language === 'ar' ? 'الأطباء' : 'Doctors'}</span>
-          </TabsTrigger>
-          <TabsTrigger value="services" className="flex-1 lg:flex-none flex items-center gap-2 px-4">
-            <Briefcase className="w-4 h-4" />
-            <span className="hidden sm:inline">{language === 'ar' ? 'الخدمات' : 'Services'}</span>
-          </TabsTrigger>
-          <TabsTrigger value="lab-services" className="flex-1 lg:flex-none flex items-center gap-2 px-4">
-            <FlaskConical className="w-4 h-4" />
-            <span className="hidden sm:inline">{language === 'ar' ? 'خدمات المعمل' : 'Lab Services'}</span>
-          </TabsTrigger>
-          <TabsTrigger value="lists" className="flex-1 lg:flex-none flex items-center gap-2 px-4">
-            <MapPin className="w-4 h-4" />
-            <span className="hidden sm:inline">{language === 'ar' ? 'القوائم' : 'Lists'}</span>
-          </TabsTrigger>
+        {/* Modern Tabs Navigation */}
+        <div className="overflow-x-auto pb-2 scrollbar-hide">
+          <TabsList className="bg-white/40 dark:bg-gray-900/40 backdrop-blur-md p-1.5 rounded-2xl h-auto border inline-flex min-w-full md:min-w-0 md:flex-wrap lg:flex-nowrap gap-1">
+            <TabTriggerItem value="general" icon={Globe} label={language === 'ar' ? 'عام' : 'General'} />
+            <TabTriggerItem value="clinic" icon={Building2} label={language === 'ar' ? 'العيادة' : 'Clinic'} />
+            <TabTriggerItem value="doctors" icon={Stethoscope} label={language === 'ar' ? 'الأطباء' : 'Doctors'} />
+            <TabTriggerItem value="services" icon={Briefcase} label={language === 'ar' ? 'الخدمات' : 'Services'} />
+            <TabTriggerItem value="lab-services" icon={FlaskConical} label={language === 'ar' ? 'خدمات المعمل' : 'Lab Services'} />
+            <TabTriggerItem value="lists" icon={MapPin} label={language === 'ar' ? 'المدن' : 'Cities'} />
+            <TabTriggerItem value="license" icon={ShieldCheck} label={language === 'ar' ? 'الرخصة' : 'License'} />
+            <TabTriggerItem value="backup" icon={Upload} label={language === 'ar' ? 'نسخ احتياطي' : 'Backup'} />
+            {(user?.role === 'admin' || hasPermission('ADD_USER')) && !isClientMode && (
+              <TabTriggerItem value="users" icon={UserCheck} label={language === 'ar' ? 'المستخدمين' : 'Users'} />
+            )}
+          </TabsList>
+        </div>
 
-          <TabsTrigger value="license" className="flex-1 lg:flex-none flex items-center gap-2 px-4">
-            <Key className="w-4 h-4" />
-            <span className="hidden sm:inline">{language === 'ar' ? 'الرخصة' : 'License'}</span>
-          </TabsTrigger>
-          <TabsTrigger value="backup" className="flex-1 lg:flex-none flex items-center gap-2 px-4">
-            <Upload className="w-4 h-4" />
-            <span className="hidden sm:inline">{language === 'ar' ? 'النسخ الاحتياطي' : 'Backup'}</span>
-          </TabsTrigger>
-        </TabsList>
-
-
-
-        {/* License Tab */}
-        <TabsContent value="license" className="space-y-6">
-          <LicenseSettings />
-        </TabsContent>
-
-        {/* Backup Tab */}
-        <TabsContent value="backup" className="space-y-6">
-          <BackupSettings />
-        </TabsContent>
+        {/* --- TABS CONTENT --- */}
 
         {/* General Tab */}
-        <TabsContent value="general" className="space-y-6">
-          {/* Language Selection */}
-          <Card variant="primary" className="animate-fade-in" dir={language === 'ar' ? 'rtl' : 'ltr'}>
-            <CardHeader>
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-xl gradient-primary flex items-center justify-center">
-                  <Globe className="w-6 h-6 text-primary-foreground" />
+        <TabsContent value="general" className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Language */}
+            <Card className="border-none shadow-md bg-white/50 dark:bg-gray-900/50 backdrop-blur-sm">
+              <CardHeader className="flex flex-row items-center gap-4">
+                <div className="w-12 h-12 rounded-xl bg-blue-100 dark:bg-blue-900/20 text-blue-600 flex items-center justify-center">
+                  <Globe className="w-6 h-6" />
                 </div>
-                <div className="text-start">
-                  <CardTitle>{language === 'ar' ? 'اللغة' : 'Language'}</CardTitle>
-                  <CardDescription>
-                    {language === 'ar' ? 'اختر لغة العرض المفضلة' : 'Choose your preferred display language'}
-                  </CardDescription>
+                <div>
+                  <CardTitle className="text-lg">{language === 'ar' ? 'اللغة' : 'Language'}</CardTitle>
+                  <CardDescription>{language === 'ar' ? 'لغة العرض في التطبيق' : 'Application display language'}</CardDescription>
                 </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="flex gap-3">
+              </CardHeader>
+              <CardContent className="flex gap-4">
                 <Button
                   variant={language === 'en' ? 'default' : 'outline'}
                   onClick={() => setLanguage('en')}
-                  className="flex-1"
+                  className={cn("flex-1 h-12 text-lg", language === 'en' && "bg-blue-600 hover:bg-blue-700")}
                 >
-                  <span className="me-2">🇺🇸</span>
-                  English
+                  <span className="me-2 text-2xl">🇺🇸</span> English
                 </Button>
                 <Button
                   variant={language === 'ar' ? 'default' : 'outline'}
                   onClick={() => setLanguage('ar')}
-                  className="flex-1"
+                  className={cn("flex-1 h-12 text-lg", language === 'ar' && "bg-blue-600 hover:bg-blue-700")}
                 >
-                  <span className="me-2">🇸🇦</span>
-                  العربية
+                  <span className="me-2 text-2xl">🇸🇦</span> العربية
                 </Button>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
 
-          {/* Security Card (Change PIN) */}
-          <Card variant="elevated" className="animate-fade-in border-destructive/20" dir={language === 'ar' ? 'rtl' : 'ltr'}>
-            <CardHeader>
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-xl bg-destructive/10 flex items-center justify-center">
-                  <KeyRound className="w-6 h-6 text-destructive" />
+            {/* Currency */}
+            <Card className="border-none shadow-md bg-white/50 dark:bg-gray-900/50 backdrop-blur-sm">
+              <CardHeader className="flex flex-row items-center gap-4">
+                <div className="w-12 h-12 rounded-xl bg-emerald-100 dark:bg-emerald-900/20 text-emerald-600 flex items-center justify-center">
+                  <DollarSign className="w-6 h-6" />
                 </div>
-                <div className="text-start">
-                  <CardTitle>{language === 'ar' ? 'الأمان' : 'Security'}</CardTitle>
-                  <CardDescription>
-                    {language === 'ar' ? 'قم بتغيير الرقم السري الخاص بك' : 'Change your PIN code'}
-                  </CardDescription>
+                <div>
+                  <CardTitle className="text-lg">{language === 'ar' ? 'العملة' : 'Currency'}</CardTitle>
+                  <CardDescription>{language === 'ar' ? 'العملة الافتراضية للعيادة' : 'Default clinic currency'}</CardDescription>
                 </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <ChangePinDialog
-                trigger={
-                  <Button variant="outline" className="w-full sm:w-auto">
-                    {language === 'ar' ? 'تغيير الرقم السري' : 'Change PIN'}
-                  </Button>
-                }
-              />
-            </CardContent>
-          </Card>
+              </CardHeader>
+              <CardContent>
+                <Select value={currency} onValueChange={(value) => setCurrency(value as any)} dir={language === 'ar' ? 'rtl' : 'ltr'}>
+                  <SelectTrigger className="w-full h-12 text-lg">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="z-50">
+                    {CURRENCY_OPTIONS.map(option => (
+                      <SelectItem key={option.code} value={option.code}>
+                        <span className="font-bold me-2">{option.symbol}</span> - {option.displayName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </CardContent>
+            </Card>
 
-          {/* Currency Selection */}
-          <Card variant="elevated" className="animate-fade-in" dir={language === 'ar' ? 'rtl' : 'ltr'}>
-            <CardHeader>
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-xl bg-secondary flex items-center justify-center">
-                  <DollarSign className="w-6 h-6 text-muted-foreground" />
-                </div>
-                <div className="text-start">
-                  <CardTitle>{language === 'ar' ? 'العملة' : 'Currency'}</CardTitle>
-                  <CardDescription>
-                    {language === 'ar' ? 'اختر العملة المستخدمة في العيادة' : 'Select the currency used in the clinic'}
-                  </CardDescription>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <Select value={currency} onValueChange={(value) => setCurrency(value as any)} dir={language === 'ar' ? 'rtl' : 'ltr'}>
-                <SelectTrigger className="w-full text-start">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-popover z-50">
-                  {CURRENCY_OPTIONS.map(option => (
-                    <SelectItem key={option.code} value={option.code}>
-                      {option.symbol} - {option.displayName}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </CardContent>
-          </Card>
+            {/* Security - Only for Admin on Server */}
+            {user?.role === 'admin' && !isClientMode && (
+              <Card className="border-none shadow-md bg-white/50 dark:bg-gray-900/50 backdrop-blur-sm">
+                <CardHeader className="flex flex-row items-center gap-4">
+                  <div className="w-12 h-12 rounded-xl bg-rose-100 dark:bg-rose-900/20 text-rose-600 flex items-center justify-center">
+                    <KeyRound className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-lg">{language === 'ar' ? 'الأمان' : 'Security'}</CardTitle>
+                    <CardDescription>{language === 'ar' ? 'تغيير رقم المرور الشخصي' : 'Change personal PIN code'}</CardDescription>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <ChangePinDialog
+                    trigger={
+                      <Button variant="outline" className="w-full h-12 border-rose-200 hover:bg-rose-50 hover:text-rose-700 dark:border-rose-900 dark:hover:bg-rose-900/50">
+                        {language === 'ar' ? 'تغيير الرقم السري' : 'Change PIN'}
+                      </Button>
+                    }
+                  />
+                </CardContent>
+              </Card>
+            )}
 
-          {/* Software Update */}
-          <UpdateCard language={language} />
-
+            <div className="md:col-span-2">
+              <UpdateCard language={language} />
+            </div>
+          </div>
         </TabsContent>
 
-        {/* Clinic Tab */}
-        <TabsContent value="clinic" className="space-y-6">
-          <Card variant="elevated" className="animate-fade-in">
-            <CardHeader>
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-xl gradient-primary flex items-center justify-center">
-                  <Building2 className="w-6 h-6 text-primary-foreground" />
+        {/* Clinic Info Tab */}
+        <TabsContent value="clinic" className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
+          <Card className="border-none shadow-md bg-white/50 dark:bg-gray-900/50 backdrop-blur-sm">
+            <CardHeader className="border-b border-border/50 pb-4 mb-4">
+              <div className="flex items-center gap-4">
+                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-500 text-white flex items-center justify-center shadow-lg shadow-indigo-500/20">
+                  <Building2 className="w-7 h-7" />
                 </div>
-                <div className="text-start">
-                  <CardTitle>{language === 'ar' ? 'معلومات العيادة' : 'Clinic Information'}</CardTitle>
-                  <CardDescription>
-                    {language === 'ar' ? 'تظهر هذه المعلومات في الفواتير والتقارير' : 'This information appears on invoices and reports'}
-                  </CardDescription>
+                <div>
+                  <CardTitle className="text-xl">{language === 'ar' ? 'بيانات العيادة' : 'Clinic Details'}</CardTitle>
+                  <CardDescription>{language === 'ar' ? 'المعلومات التي تظهر في التقارير والفواتير' : 'Details appearing in reports and invoices'}</CardDescription>
+                </div>
+                <div className="ms-auto">
+                  <Button onClick={handleSaveChanges} disabled={isSaving || !canEditSettings} className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-md">
+                    <Save className="w-4 h-4 me-2" />
+                    {isSaving ? (language === 'ar' ? 'جاري الحفظ...' : 'Saving...') : (language === 'ar' ? 'حفظ التعديلات' : 'Save Changes')}
+                  </Button>
                 </div>
               </div>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+            <CardContent className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <Label>{language === 'ar' ? 'اسم العيادة' : 'Clinic Name'}</Label>
                   <Input
+                    className="h-11"
                     value={localClinicInfo.name || ''}
                     onChange={(e) => handleClinicInfoChange('name', e.target.value)}
-                    placeholder={language === 'ar' ? 'اسم العيادة' : 'Clinic Name'}
+                    disabled={!canEditSettings}
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>{language === 'ar' ? 'اسم صاحب العيادة / الطبيب' : 'Owner / Doctor Name'}</Label>
+                  <Label>{language === 'ar' ? 'اسم الطبيب / المالك' : 'Doctor / Owner Name'}</Label>
                   <Input
+                    className="h-11"
                     value={localClinicInfo.ownerName || ''}
                     onChange={(e) => handleClinicInfoChange('ownerName', e.target.value)}
-                    placeholder={language === 'ar' ? 'د. أحمد' : 'Dr. Ahmed'}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>{language === 'ar' ? 'العنوان' : 'Address'}</Label>
-                  <Input
-                    value={localClinicInfo.address || ''}
-                    onChange={(e) => handleClinicInfoChange('address', e.target.value)}
-                    placeholder={language === 'ar' ? 'عنوان العيادة' : 'Clinic Address'}
+                    disabled={!canEditSettings}
                   />
                 </div>
                 <div className="space-y-2">
                   <Label>{language === 'ar' ? 'رقم الهاتف' : 'Phone Number'}</Label>
                   <Input
+                    className="h-11"
                     value={localClinicInfo.phone || ''}
                     onChange={(e) => handleClinicInfoChange('phone', e.target.value)}
-                    placeholder="+20 123 456 7890"
                     dir="ltr"
+                    disabled={!canEditSettings}
                   />
                 </div>
                 <div className="space-y-2">
                   <Label>{language === 'ar' ? 'رقم الواتساب' : 'WhatsApp Number'}</Label>
                   <Input
+                    className="h-11"
                     value={localClinicInfo.whatsappNumber || ''}
                     onChange={(e) => handleClinicInfoChange('whatsappNumber', e.target.value)}
-                    placeholder="+201234567890"
                     dir="ltr"
+                    disabled={!canEditSettings}
                   />
-                  <p className="text-xs text-muted-foreground">
-                    {language === 'ar' ? 'يستخدم لإرسال التقارير عبر واتساب' : 'Used for sending reports via WhatsApp'}
-                  </p>
                 </div>
-                <div className="space-y-2">
-                  <Label>{language === 'ar' ? 'البريد الإلكتروني' : 'Email'}</Label>
+                <div className="space-y-2 md:col-span-2">
+                  <Label>{language === 'ar' ? 'العنوان' : 'Address'}</Label>
                   <Input
-                    value={user?.email || ''}
-                    disabled
-                    readOnly
-                    className="bg-muted/50 cursor-not-allowed"
-                    placeholder="info@clinic.com"
-                    dir="ltr"
+                    className="h-11"
+                    value={localClinicInfo.address || ''}
+                    onChange={(e) => handleClinicInfoChange('address', e.target.value)}
+                    disabled={!canEditSettings}
                   />
-                  <p className="text-[10px] text-muted-foreground">
-                    {language === 'ar'
-                      ? 'البريد الإلكتروني مرتبط بحسابك ولا يمكن تغييره من هنا'
-                      : 'Email is linked to your account and cannot be changed here'}
-                  </p>
                 </div>
               </div>
-              <div className="space-y-2">
-                <Label>{language === 'ar' ? 'شعار العيادة' : 'Clinic Logo'}</Label>
-                <div className="flex items-start gap-4 border rounded-lg p-4 bg-secondary/10">
-                  <div className="flex-1 space-y-3">
-                    <div className="flex items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => document.getElementById('logo-upload')?.click()}
-                        className="gap-2"
-                      >
-                        <Upload className="w-4 h-4" />
-                        {language === 'ar' ? 'اختر الشعار' : 'Choose Logo'}
-                      </Button>
-                      <Input
-                        id="logo-upload"
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={handleLogoUpload}
-                      />
-                      {localClinicInfo.logo && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="text-destructive hover:text-destructive/90 hover:bg-destructive/10"
-                          onClick={() => setLocalClinicInfo((prev: any) => ({ ...prev, logo: '' }))}
-                        >
-                          {language === 'ar' ? 'حذف' : 'Remove'}
-                        </Button>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground leading-relaxed">
-                      {language === 'ar'
-                        ? 'يفضل أن تكون الصورة مربعة (500x500) وبحجم لا يزيد عن 2 ميجابايت'
-                        : 'Recommended: Square 500x500px, Max 2MB'}
-                    </p>
-                  </div>
 
+              <div className="p-4 rounded-xl border bg-background/50 flex flex-col sm:flex-row items-center gap-6">
+                <div className="relative group cursor-pointer" onClick={() => canEditSettings && document.getElementById('logo-upload')?.click()}>
                   {localClinicInfo.logo ? (
-                    <div className="w-20 h-20 border rounded-lg bg-background flex items-center justify-center p-1 shadow-sm overflow-hidden relative group">
-                      <img src={localClinicInfo.logo} alt="Clinic Logo" className="w-full h-full object-contain" />
-                    </div>
+                    <img src={localClinicInfo.logo} alt="Logo" className="w-24 h-24 rounded-full object-contain bg-white border shadow-sm" />
                   ) : (
-                    <div className="w-20 h-20 border-2 border-dashed rounded-lg flex items-center justify-center text-muted-foreground bg-muted/50">
-                      <Building2 className="w-8 h-8 opacity-50" />
+                    <div className="w-24 h-24 rounded-full bg-muted flex items-center justify-center border-2 border-dashed border-muted-foreground/30">
+                      <Upload className="w-8 h-8 text-muted-foreground/50" />
+                    </div>
+                  )}
+                  {canEditSettings && (
+                    <div className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Edit2 className="w-6 h-6 text-white" />
                     </div>
                   )}
                 </div>
+                <div className="flex-1 text-center sm:text-start space-y-2">
+                  <h4 className="font-semibold">{language === 'ar' ? 'شعار العيادة' : 'Clinic Logo'}</h4>
+                  <p className="text-sm text-muted-foreground">
+                    {language === 'ar' ? 'انقر على الصورة لرفع شعار جديد (مربع 500x500)' : 'Click image to upload new logo (Square 500x500)'}
+                  </p>
+                  <Input
+                    id="logo-upload"
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleLogoUpload}
+                    disabled={!canEditSettings}
+                  />
+                </div>
               </div>
-
-              {/* Save Button */}
-              <div className="flex justify-end pt-4 border-t">
-                <Button onClick={handleSaveChanges} disabled={isSaving} className="min-w-[120px]">
-                  {isSaving
-                    ? (language === 'ar' ? 'جاري الحفظ...' : 'Saving...')
-                    : (language === 'ar' ? 'حفظ التعديلات' : 'Save Changes')
-                  }
-                </Button>
-              </div>
-
             </CardContent>
           </Card>
         </TabsContent>
 
         {/* Doctors Tab */}
-        <TabsContent value="doctors" className="space-y-6">
-          {isReadOnly && (
-            <div className="bg-amber-50 border border-amber-200 text-amber-800 p-4 rounded-lg flex items-center gap-2" dir={language === 'ar' ? 'rtl' : 'ltr'}>
-              <div className="w-5 h-5 flex items-center justify-center rounded-full bg-amber-200 text-amber-700 shrink-0">!</div>
-              <p className="text-sm font-medium">
-                {language === 'ar'
-                  ? 'إدارة فريق العمل غير متاحة في وضع القراءة فقط (تجديد الترخيص مطلوب)'
-                  : 'Staff management is disabled in Read-Only mode (License renewal required)'}
-              </p>
-            </div>
-          )}
-          {/* Note: We disable interactions properly but keep visibility */}
-          <Card variant="elevated" className={cn("animate-fade-in")}>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-xl gradient-primary flex items-center justify-center">
-                    <Stethoscope className="w-6 h-6 text-primary-foreground" />
-                  </div>
-                  <div className="text-start">
-                    <CardTitle>{language === 'ar' ? 'الأطباء والطاقم الطبي' : 'Doctors & Staff'}</CardTitle>
-                    <CardDescription>
-                      {language === 'ar' ? 'إدارة أطباء العيادة والطاقم الطبي' : 'Manage clinic doctors and medical staff'}
-                    </CardDescription>
-                  </div>
+        <TabsContent value="doctors" className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
+          <Card className="border-none shadow-md bg-white/50 dark:bg-gray-900/50 backdrop-blur-sm">
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-xl bg-purple-100 dark:bg-purple-900/20 text-purple-600 flex items-center justify-center">
+                  <Stethoscope className="w-6 h-6" />
                 </div>
-                {!isReadOnly && (
-                  <Button onClick={handleAddDoctor} className="flex items-center gap-2">
-                    <Plus className="w-4 h-4" />
-                    {language === 'ar' ? 'إضافة' : 'Add'}
-                  </Button>
-                )}
+                <div>
+                  <CardTitle>{language === 'ar' ? 'قائمة الأطباء' : 'Doctors List'}</CardTitle>
+                  <CardDescription>{language === 'ar' ? 'إدارة الطاقم الطبي والعمولات' : 'Manage staff and commissions'}</CardDescription>
+                </div>
               </div>
+              {!isReadOnly && canEditSettings && (
+                <Button onClick={handleAddDoctor} className="bg-purple-600 hover:bg-purple-700 text-white gap-2">
+                  <Plus className="w-4 h-4" /> {language === 'ar' ? 'إضافة' : 'Add'}
+                </Button>
+              )}
             </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                {localStaff.map(doctor => (
-                  <div
-                    key={doctor.id}
-                    className={cn(
-                      "flex items-center gap-4 p-3 rounded-lg transition-colors",
-                      doctor.active
-                        ? "bg-secondary/30 hover:bg-secondary/50"
-                        : "bg-muted/50 opacity-60"
-                    )}
-                  >
-                    <div className={cn(
-                      "w-10 h-10 rounded-full flex items-center justify-center shrink-0",
-                      doctor.active ? "bg-primary/10" : "bg-muted"
-                    )}>
-                      <Stethoscope className={cn(
-                        "w-5 h-5",
-                        doctor.active ? "text-primary" : "text-muted-foreground"
-                      )} />
-                    </div>
-                    <div className="flex-1 text-start">
-                      <p className="font-medium">{doctor.name}</p>
-                      <div className="text-sm text-muted-foreground flex flex-wrap items-center gap-2">
-                        <span>{getRoleLabel(doctor.role)}</span>
-                        {doctor.commissionValue && doctor.commissionValue > 0 && (
-                          <span className="text-xs bg-success/10 text-success px-2 py-0.5 rounded-full">
-                            {doctor.commissionType === 'percentage'
-                              ? `${doctor.commissionValue}%`
-                              : (language === 'ar' ? `${doctor.commissionValue} ثابت` : `${doctor.commissionValue} fixed`)
-                            }
-                          </span>
-                        )}
-                        {!doctor.active && (
-                          <span className="text-destructive">
-                            ({language === 'ar' ? 'غير نشط' : 'Inactive'})
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex gap-1">
-                      {!isReadOnly && (
-                        <>
-                          <Button variant="ghost" size="icon" onClick={() => handleEditDoctor(doctor)}>
-                            <Edit2 className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleDeleteDoctor(doctor.id)}
-                            className="text-destructive hover:text-destructive/90 hover:bg-destructive/10"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </>
+            <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {localStaff.map(doctor => (
+                <div key={doctor.id} className="flex items-center gap-4 p-4 rounded-xl border bg-card hover:shadow-md transition-all duration-200">
+                  <div className={cn("w-14 h-14 rounded-full flex items-center justify-center text-xl font-bold", doctor.active ? "bg-purple-100 text-purple-700" : "bg-gray-100 text-gray-500")}>
+                    {doctor.name.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="font-bold text-lg">{doctor.name}</h3>
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <span className="capitalize">{getRoleLabel(doctor.role)}</span>
+                      {doctor.commissionValue > 0 && (
+                        <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full text-xs font-bold">
+                          {doctor.commissionType === 'percentage' ? `${doctor.commissionValue}%` : `${doctor.commissionValue} Fix`}
+                        </span>
                       )}
                     </div>
                   </div>
-                ))}
-                {localStaff.length === 0 && (
-                  <p className="text-center text-muted-foreground py-4">
-                    {language === 'ar' ? 'لا يوجد أطباء مسجلين' : 'No doctors registered'}
-                  </p>
-                )}
-              </div>
+                  {!isReadOnly && canEditSettings && (
+                    <div className="flex flex-col gap-1">
+                      <Button variant="ghost" size="icon" onClick={() => handleEditDoctor(doctor)} className="h-8 w-8 text-blue-600">
+                        <Edit2 className="w-4 h-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => handleDeleteDoctor(doctor.id)} className="h-8 w-8 text-red-600">
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {localStaff.length === 0 && (
+                <div className="col-span-full py-12 text-center text-muted-foreground">
+                  {language === 'ar' ? 'لا يوجد أطباء' : 'No doctors found'}
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
 
         {/* Services Tab */}
-        <TabsContent value="services" className="space-y-6">
-          <Card variant="elevated" className="animate-fade-in">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-xl gradient-accent flex items-center justify-center">
-                    <Briefcase className="w-6 h-6 text-accent-foreground" />
+        <TabsContent value="services" className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
+          <Card className="border-none shadow-md bg-white/50 dark:bg-gray-900/50 backdrop-blur-sm">
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-xl bg-orange-100 dark:bg-orange-900/20 text-orange-600 flex items-center justify-center">
+                  <Briefcase className="w-6 h-6" />
+                </div>
+                <div>
+                  <CardTitle>{language === 'ar' ? 'الخدمات العلاجية' : 'Services'}</CardTitle>
+                  <CardDescription>{language === 'ar' ? 'قائمة الخدمات والأسعار الافتراضية' : 'Services dictionary & prices'}</CardDescription>
+                </div>
+              </div>
+              <Button onClick={handleAddService} disabled={!canEditSettings} className="bg-orange-600 hover:bg-orange-700 text-white gap-2">
+                <Plus className="w-4 h-4" /> {language === 'ar' ? 'إضافة' : 'Add'}
+              </Button>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {localServices.map(service => (
+                <div key={service.id} className="flex items-center justify-between p-3 rounded-lg border bg-card hover:border-orange-200 transition-colors">
+                  <div>
+                    <p className="font-semibold">{service.name}</p>
+                    <p className="text-sm font-bold text-orange-600 mt-1">{service.defaultPrice} {currency}</p>
                   </div>
-                  <div className="text-start">
-                    <CardTitle>{language === 'ar' ? 'الخدمات والأسعار' : 'Services & Pricing'}</CardTitle>
-                    <CardDescription>
-                      {language === 'ar' ? 'إدارة خدمات العيادة والأسعار الافتراضية' : 'Manage clinic services and default prices'}
-                    </CardDescription>
+                  <div className="flex gap-1">
+                    {canEditSettings && (
+                      <>
+                        <Button variant="ghost" size="icon" onClick={() => handleEditService(service)} className="h-8 w-8 text-muted-foreground">
+                          <Edit2 className="w-4 h-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => handleDeleteService(service.id)} className="h-8 w-8 text-red-500">
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </div>
-                <Button onClick={handleAddService} className="flex items-center gap-2">
-                  <Plus className="w-4 h-4" />
-                  {language === 'ar' ? 'إضافة' : 'Add'}
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                {localServices.map(service => (
-                  <div
-                    key={service.id}
-                    className="flex items-center gap-4 p-3 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors"
-                  >
-                    <div className="flex-1 text-start">
-                      <p className="font-medium">{service.name}</p>
-                    </div>
-                    <div className="text-end min-w-[100px]">
-                      <p className="font-bold text-primary">{service.defaultPrice}</p>
-                    </div>
-                    <div className="flex gap-1">
-                      <Button variant="ghost" size="icon" onClick={() => handleEditService(service)}>
-                        <Edit2 className="w-4 h-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleDeleteService(service.id)} className="text-destructive">
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              ))}
             </CardContent>
           </Card>
         </TabsContent>
 
         {/* Lab Services Tab */}
-        <TabsContent value="lab-services" className="space-y-6">
+        <TabsContent value="lab-services" className="animate-in slide-in-from-bottom-4 duration-500">
           <LabServicesSettings />
         </TabsContent>
 
-        {/* Lists Tab (Cities) */}
-        <TabsContent value="lists" className="space-y-6">
-          <Card variant="elevated" className="animate-fade-in">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-xl bg-info flex items-center justify-center">
-                    <MapPin className="w-6 h-6 text-info-foreground" />
-                  </div>
-                  <div className="text-start">
-                    <CardTitle>{language === 'ar' ? 'قائمة المدن' : 'Cities List'}</CardTitle>
-                    <CardDescription>
-                      {language === 'ar' ? 'المدن المتاحة في نموذج المريض' : 'Available cities in patient form'}
-                    </CardDescription>
-                  </div>
+        {/* Cities Tab */}
+        <TabsContent value="lists" className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
+          <Card className="border-none shadow-md bg-white/50 dark:bg-gray-900/50 backdrop-blur-sm">
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-xl bg-teal-100 dark:bg-teal-900/20 text-teal-600 flex items-center justify-center">
+                  <MapPin className="w-6 h-6" />
                 </div>
-                <Button onClick={handleAddCity} className="flex items-center gap-2">
-                  <Plus className="w-4 h-4" />
-                  {language === 'ar' ? 'إضافة' : 'Add'}
-                </Button>
+                <div>
+                  <CardTitle>{language === 'ar' ? 'المدن والمناطق' : 'Cities & Locations'}</CardTitle>
+                  <CardDescription>{language === 'ar' ? 'المدن المتاحة في ملف المريض' : 'Locations available in patient files'}</CardDescription>
+                </div>
               </div>
+              <Button onClick={handleAddCity} disabled={!canEditSettings} className="bg-teal-600 hover:bg-teal-700 text-white gap-2">
+                <Plus className="w-4 h-4" /> {language === 'ar' ? 'إضافة' : 'Add'}
+              </Button>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              <div className="flex flex-wrap gap-3">
                 {localCities.map(city => (
-                  <div
-                    key={city.id}
-                    className="flex items-center gap-3 p-3 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors"
-                  >
-                    <MapPin className="w-4 h-4 text-muted-foreground shrink-0" />
-                    <div className="flex-1 text-start min-w-0">
-                      <p className="font-medium truncate">{city.name}</p>
-                    </div>
-                    <div className="flex gap-1 shrink-0">
-                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEditCity(city)}>
-                        <Edit2 className="w-3 h-3" />
-                      </Button>
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleDeleteCity(city.id)}>
-                        <Trash2 className="w-3 h-3" />
-                      </Button>
-                    </div>
+                  <div key={city.id} className="flex items-center gap-2 px-3 py-2 rounded-full border bg-card hover:shadow-sm transition-all">
+                    <MapPin className="w-4 h-4 text-teal-500" />
+                    <span className="font-medium">{city.name}</span>
+                    <div className="w-px h-4 bg-border mx-1" />
+                    {canEditSettings && (
+                      <>
+                        <button onClick={() => handleEditCity(city)} className="text-muted-foreground hover:text-blue-500">
+                          <Edit2 className="w-3 h-3" />
+                        </button>
+                        <button onClick={() => handleDeleteCity(city.id)} className="text-muted-foreground hover:text-red-500">
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </>
+                    )}
                   </div>
                 ))}
               </div>
             </CardContent>
           </Card>
         </TabsContent>
+
+        {/* Other Tabs */}
+        <TabsContent value="license" className="animate-in slide-in-from-bottom-4 duration-500">
+          <LicenseSettings />
+        </TabsContent>
+        <TabsContent value="backup" className="animate-in slide-in-from-bottom-4 duration-500">
+          <BackupSettings />
+        </TabsContent>
+        <TabsContent value="users" className="animate-in slide-in-from-bottom-4 duration-500">
+          <UserManagementTab />
+        </TabsContent>
+
       </Tabs>
 
-      {/* App Info */}
-      <Card variant="ghost" className="border border-border">
-        <CardContent className="py-6 text-center">
-          <p className="text-sm text-muted-foreground">
-            {language === 'ar' ? 'دينتال فلو - نظام إدارة عيادات الأسنان' : 'Dental Flow - Dental Clinic Management System'}
-          </p>
-          <p className="text-xs text-muted-foreground mt-1">
-            {language === 'ar' ? 'الإصدار 1.0.0' : 'Version 1.0.0'}
-          </p>
-        </CardContent>
-      </Card>
-
-      {/* Service Dialog - Single Name Field */}
+      {/* Dialogs */}
       <Dialog open={serviceDialogOpen} onOpenChange={setServiceDialogOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {editingService
-                ? (language === 'ar' ? 'تعديل الخدمة' : 'Edit Service')
-                : (language === 'ar' ? 'إضافة خدمة' : 'Add Service')
-              }
+              {editingService ? (language === 'ar' ? 'تعديل الخدمة' : 'Edit Service') : (language === 'ar' ? 'إضافة خدمة' : 'Add Service')}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -1002,15 +869,11 @@ const SettingsPage: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      {/* City Dialog - Single Name Field */}
       <Dialog open={cityDialogOpen} onOpenChange={setCityDialogOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {editingCity
-                ? (language === 'ar' ? 'تعديل المدينة' : 'Edit City')
-                : (language === 'ar' ? 'إضافة مدينة' : 'Add City')
-              }
+              {editingCity ? (language === 'ar' ? 'تعديل المدينة' : 'Edit City') : (language === 'ar' ? 'إضافة مدينة' : 'Add City')}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -1034,15 +897,11 @@ const SettingsPage: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Doctor Dialog - Single Name Field */}
       <Dialog open={doctorDialogOpen} onOpenChange={setDoctorDialogOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {editingDoctor
-                ? (language === 'ar' ? 'تعديل الطبيب' : 'Edit Doctor')
-                : (language === 'ar' ? 'إضافة طبيب' : 'Add Doctor')
-              }
+              {editingDoctor ? (language === 'ar' ? 'تعديل الطبيب' : 'Edit Doctor') : (language === 'ar' ? 'إضافة طبيب' : 'Add Doctor')}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -1063,7 +922,7 @@ const SettingsPage: React.FC = () => {
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent className="bg-popover z-50">
+                <SelectContent className="z-50">
                   <SelectItem value="doctor">{language === 'ar' ? 'طبيب' : 'Doctor'}</SelectItem>
                   <SelectItem value="assistant">{language === 'ar' ? 'مساعد' : 'Assistant'}</SelectItem>
                   <SelectItem value="hygienist">{language === 'ar' ? 'أخصائي تنظيف' : 'Hygienist'}</SelectItem>
@@ -1080,7 +939,7 @@ const SettingsPage: React.FC = () => {
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent className="bg-popover z-50">
+                  <SelectContent className="z-50">
                     <SelectItem value="percentage">{language === 'ar' ? 'نسبة مئوية %' : 'Percentage %'}</SelectItem>
                     <SelectItem value="fixed">{language === 'ar' ? 'مبلغ ثابت' : 'Fixed Amount'}</SelectItem>
                   </SelectContent>
@@ -1115,6 +974,7 @@ const SettingsPage: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
     </div>
   );
 };

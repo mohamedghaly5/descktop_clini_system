@@ -263,6 +263,8 @@ const translations: Translations = {
   'lab.orders': { en: 'Lab Orders', ar: 'طلبات المعمل' },
   'savedSuccessfully': { en: 'Saved successfully', ar: 'تم الحفظ بنجاح' },
   'expenses.validation.amountPositive': { en: 'Amount must be greater than zero', ar: 'يجب أن يكون المبلغ أكبر من صفر' },
+  'القسم الأساسي': { en: 'Main Section', ar: 'القسم الأساسي' },
+  'القسم الإداري': { en: 'Admin Section', ar: 'القسم الإداري' },
 };
 
 interface LanguageContextType {

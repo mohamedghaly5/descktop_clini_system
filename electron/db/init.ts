@@ -21,6 +21,24 @@ import { up as migrateLabManagement } from './migrations/007_lab_management.js';
 import { up as migrateMultipleLabs } from './migrations/008_multiple_labs.js';
 // @ts-ignore
 import { up as migrateLabGeneralPayments } from './migrations/009_lab_general_payments.js';
+// @ts-ignore
+import { up as migrateFixAttachments } from './migrations/010_fix_attachments.js';
+// @ts-ignore
+import { up as migrateFixAttachmentsFK } from './migrations/011_fix_attachments_fk.js';
+// @ts-ignore
+import { up as migrateCleanupLegacy } from './migrations/012_cleanup_legacy.js';
+// @ts-ignore
+import { up as migrateForceCleanup } from './migrations/013_force_cleanup.js';
+// @ts-ignore
+import { up as migrateStockManagement } from './migrations/014_stock_management.js';
+// @ts-ignore
+import { up as migrateUnifySettings } from './migrations/015_unify_settings.js';
+// @ts-ignore
+import { up as migrateStockCategories } from './migrations/016_stock_categories.js';
+// @ts-ignore
+import { up as migrateRemoveLabExpectedDate } from './migrations/017_remove_lab_expected_date.js';
+// @ts-ignore
+import { up as migrateSoftDelete } from './migrations/018_add_soft_delete.js';
 
 let db: Database.Database | null = null;
 
@@ -143,6 +161,10 @@ function runMigrations(database: Database.Database) {
       database.prepare("INSERT OR REPLACE INTO app_meta (key, value) VALUES ('last_migration', '8')").run();
     }
 
+
+
+    // ...
+
     // Migration 9: Lab General Payments
     if (lastMigration < 9) {
       console.log('Running Migration 009: Lab General Payments...');
@@ -150,10 +172,111 @@ function runMigrations(database: Database.Database) {
       database.prepare("INSERT OR REPLACE INTO app_meta (key, value) VALUES ('last_migration', '9')").run();
     }
 
+    // Migration 10: Fix Attachments
+    if (lastMigration < 10) {
+      console.log('Running Migration 010: Fix Attachments...');
+      migrateFixAttachments(database);
+      database.prepare("INSERT OR REPLACE INTO app_meta (key, value) VALUES ('last_migration', '10')").run();
+    }
+
+    // Migration 11: Fix Attachments FK (Legacy Table Issue)
+    if (lastMigration < 11) {
+      console.log('Running Migration 011: Fix Attachments FK...');
+      migrateFixAttachmentsFK(database);
+      database.prepare("INSERT OR REPLACE INTO app_meta (key, value) VALUES ('last_migration', '11')").run();
+    }
+
+    // Migration 12: Cleanup Legacy Tables
+    if (lastMigration < 12) {
+      console.log('Running Migration 012: Cleanup Legacy Tables...');
+      migrateCleanupLegacy(database);
+      database.prepare("INSERT OR REPLACE INTO app_meta (key, value) VALUES ('last_migration', '12')").run();
+    }
+
+    // Migration 13: Force Cleanup (Retry)
+    if (lastMigration < 13) {
+      console.log('Running Migration 013: Force Cleanup...');
+      migrateForceCleanup(database);
+      database.prepare("INSERT OR REPLACE INTO app_meta (key, value) VALUES ('last_migration', '13')").run();
+    }
+
+    // Migration 14: Stock Management
+    if (lastMigration < 14) {
+      console.log('Running Migration 014: Stock Management...');
+      migrateStockManagement(database);
+      database.prepare("INSERT OR REPLACE INTO app_meta (key, value) VALUES ('last_migration', '14')").run();
+    }
+
+    // Migration 15: Unify Settings (Fix Reverting Issue)
+    if (lastMigration < 15) {
+      console.log('Running Migration 015: Unify Settings...');
+      migrateUnifySettings(database);
+      database.prepare("INSERT OR REPLACE INTO app_meta (key, value) VALUES ('last_migration', '15')").run();
+    }
+
+    // Migration 16: Stock Categories
+    // Logic updated to "Repair" if table is missing, even if migration version says 16
+    const stockCategoriesTable = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='stock_categories'").get();
+    if (lastMigration < 16 || !stockCategoriesTable) {
+      console.log('Running Migration 016 (or Repair): Stock Categories...');
+      try {
+        migrateStockCategories(database);
+        database.prepare("INSERT OR REPLACE INTO app_meta (key, value) VALUES ('last_migration', '16')").run();
+        console.log('Migration 016 completed.');
+      } catch (err: any) {
+        // Ignore "table already exists" error if we are repairing mixed state
+        if (!err.message.includes('already exists')) {
+          throw err;
+        }
+      }
+    }
+
+
+    // Migration 17: Remove Lab Expected Date
+    if (lastMigration < 17) {
+      console.log('Running Migration 017: Remove Lab Expected Date...');
+      migrateRemoveLabExpectedDate(database);
+      database.prepare("INSERT OR REPLACE INTO app_meta (key, value) VALUES ('last_migration', '17')").run();
+    }
+
+    // Migration 18: Add Soft Delete Columns
+    if (lastMigration < 18) {
+      console.log('Running Migration 018: Add Soft Delete Columns...');
+      migrateSoftDelete(database);
+      database.prepare("INSERT OR REPLACE INTO app_meta (key, value) VALUES ('last_migration', '18')").run();
+    }
+
+
+    // Repair: Notifications Table
+    const notificationsTable = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='notifications'").get();
+    if (!notificationsTable) {
+      console.log('Creating Notifications Table...');
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS notifications (
+            id TEXT PRIMARY KEY,
+            clinic_id TEXT NOT NULL,
+            user_id TEXT,
+            title TEXT NOT NULL,
+            message TEXT,
+            type TEXT DEFAULT 'info',
+            is_read BOOLEAN DEFAULT 0,
+            link TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+      console.log('Notifications Table Created.');
+    }
+
   } catch (e) {
+
     console.error('Migration Error:', e);
   }
 }
+
+// ...
+
+
+
 
 export function closeConnection() {
   try {
@@ -392,6 +515,7 @@ export async function initializeDatabase() {
       file_url TEXT,
       file_type TEXT,
       notes TEXT,
+      clinic_id TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE

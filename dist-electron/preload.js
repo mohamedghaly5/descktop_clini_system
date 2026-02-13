@@ -32,6 +32,7 @@ electron_1.contextBridge.exposeInMainWorld('api', {
     getPatientById: (id) => electron_1.ipcRenderer.invoke('patients:getById', id),
     createPatient: (data) => electron_1.ipcRenderer.invoke('patients:create', data),
     importPatients: (buffer, email) => electron_1.ipcRenderer.invoke('patients:import', { buffer, email }),
+    exportVcf: (data) => electron_1.ipcRenderer.invoke('patients:export-vcf', data),
     recalculateTreatmentCases: () => electron_1.ipcRenderer.invoke('treatment_cases:recalculate'),
     // Daily Report
     getDailyReport: (date, email) => electron_1.ipcRenderer.invoke('reports:daily', { date, email }),

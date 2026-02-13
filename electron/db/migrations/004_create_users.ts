@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { randomUUID } from 'crypto';
+import crypto, { randomUUID } from 'crypto';
 
 export const up = (db: Database.Database) => {
     console.log('Starting Users & Auth Migration...');
@@ -33,13 +33,17 @@ export const up = (db: Database.Database) => {
                 const userId = randomUUID();
                 const ownerName = clinic.owner_name || 'Admin Doctor';
 
-                // Insert without email
-                db.prepare(`
-                INSERT INTO users (id, clinic_id, name, role, active)
-                VALUES (?, ?, ?, 'admin', 1)
-            `).run(userId, clinic.id, ownerName);
+                // Pre-hash default PIN '0000'
+                const salt = 'dental-flow-local-salt';
+                const defaultPinHash = crypto.scryptSync('0000', salt, 64).toString('hex');
 
-                console.log(`Created Admin User: ${ownerName}`);
+                // Insert with pin_code
+                db.prepare(`
+                INSERT INTO users (id, clinic_id, name, role, active, pin_code)
+                VALUES (?, ?, ?, 'admin', 1, ?)
+            `).run(userId, clinic.id, ownerName, defaultPinHash);
+
+                console.log(`Created Admin User: ${ownerName} with PIN 0000`);
             }
         } else {
             console.warn('Warning: No clinic_001 found. Skipping owner seeding.');

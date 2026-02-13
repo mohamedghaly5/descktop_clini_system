@@ -22,6 +22,8 @@ import {
     AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
+import { db } from '@/services/db';
 
 interface Expense {
     id: string;
@@ -39,11 +41,11 @@ interface ExpensesTableProps {
 
 const ExpensesTable: React.FC<ExpensesTableProps> = ({ expenses, onEdit, onRefresh }) => {
     const { t, isRTL } = useLanguage();
+    const { user } = useAuth();
 
     const handleDelete = async (id: string) => {
         try {
-            // @ts-ignore
-            const result = await window.api.deleteExpense(id);
+            const result = await db.expenses.delete(id);
             if (result.success) {
                 toast.success(t('expenses.toast.deleted'));
                 onRefresh();
@@ -84,33 +86,40 @@ const ExpensesTable: React.FC<ExpensesTableProps> = ({ expenses, onEdit, onRefre
                                     {expense.amount.toFixed(2)}
                                 </TableCell>
                                 <TableCell>
-                                    <div className="flex items-center gap-2">
-                                        <Button variant="ghost" size="icon" onClick={() => onEdit(expense)}>
-                                            <Edit className="w-4 h-4" />
-                                        </Button>
+                                    {user?.role === 'admin' && (
+                                        <div className="flex items-center gap-2">
+                                            <Button variant="ghost" size="icon" onClick={() => onEdit(expense)}>
+                                                <Edit className="w-4 h-4" />
+                                            </Button>
 
-                                        <AlertDialog>
-                                            <AlertDialogTrigger asChild>
-                                                <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10">
-                                                    <Trash2 className="w-4 h-4" />
-                                                </Button>
-                                            </AlertDialogTrigger>
-                                            <AlertDialogContent>
-                                                <AlertDialogHeader>
-                                                    <AlertDialogTitle>{t('expenses.delete.title')}</AlertDialogTitle>
-                                                    <AlertDialogDescription>
-                                                        {t('expenses.delete.desc')}
-                                                    </AlertDialogDescription>
-                                                </AlertDialogHeader>
-                                                <AlertDialogFooter>
-                                                    <AlertDialogCancel>{t('cancel')}</AlertDialogCancel>
-                                                    <AlertDialogAction onClick={() => handleDelete(expense.id)} className="bg-destructive hover:bg-destructive/90">
-                                                        {t('delete')}
-                                                    </AlertDialogAction>
-                                                </AlertDialogFooter>
-                                            </AlertDialogContent>
-                                        </AlertDialog>
-                                    </div>
+                                            <AlertDialog>
+                                                <AlertDialogTrigger asChild>
+                                                    <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10">
+                                                        <Trash2 className="w-4 h-4" />
+                                                    </Button>
+                                                </AlertDialogTrigger>
+                                                <AlertDialogContent>
+                                                    <AlertDialogHeader>
+                                                        <AlertDialogTitle>{t('expenses.delete.title')}</AlertDialogTitle>
+                                                        <AlertDialogDescription>
+                                                            {expense.category === 'Lab'
+                                                                ? (isRTL
+                                                                    ? "سيتم حذف هذا السجل وإلغاء الدفع المرتبط به، وسيتم إعادة المبلغ إلى رصيد حساب المعمل."
+                                                                    : "This record will be deleted and the associated payment cancelled. The amount will be added back to the Lab's balance.")
+                                                                : t('expenses.delete.desc')
+                                                            }
+                                                        </AlertDialogDescription>
+                                                    </AlertDialogHeader>
+                                                    <AlertDialogFooter>
+                                                        <AlertDialogCancel>{t('cancel')}</AlertDialogCancel>
+                                                        <AlertDialogAction onClick={() => handleDelete(expense.id)} className="bg-destructive hover:bg-destructive/90">
+                                                            {t('delete')}
+                                                        </AlertDialogAction>
+                                                    </AlertDialogFooter>
+                                                </AlertDialogContent>
+                                            </AlertDialog>
+                                        </div>
+                                    )}
                                 </TableCell>
                             </TableRow>
                         ))

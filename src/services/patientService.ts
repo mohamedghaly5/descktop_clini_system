@@ -73,21 +73,22 @@ export const getActivePatients = async (email?: string | null): Promise<Patient[
 
 export const getPatientById = async (id: string): Promise<Patient | undefined> => {
   try {
-    const p = await window.api.getPatientById(id);
-    if (!p) return undefined;
-
+    // Use dedicated endpoint that returns patient even if soft-deleted
+    const patient = await db.patients.getById(id);
+    if (!patient) return undefined;
     return {
-      id: p.id,
-      name: p.full_name,
-      phone: p.phone,
-      gender: p.gender,
-      age: p.age,
-      cityId: p.city_id,
-      notes: p.notes,
-      medicalHistory: p.medical_history,
-      deleted: false,
-      createdAt: p.created_at,
-      updatedAt: p.updated_at
+      id: patient.id,
+      name: patient.full_name || patient.name,
+      phone: patient.phone,
+      gender: patient.gender,
+      age: patient.age,
+      birthDate: patient.birth_date,
+      cityId: patient.city_id || '',
+      notes: patient.notes || '',
+      medicalHistory: patient.medical_history,
+      deleted: !!patient.is_deleted,
+      createdAt: patient.created_at,
+      updatedAt: patient.updated_at,
     };
   } catch (error) {
     console.error("Failed to get patient", error);
@@ -168,10 +169,24 @@ export const updatePatient = async (id: string, updates: Partial<Patient>): Prom
   } as Patient;
 };
 
-export const softDeletePatient = async (id: string): Promise<boolean> => {
-  await db.patients.delete(id);
-  return true;
+export interface DeletePatientOptions {
+  deleteAppointments?: boolean;
+  deleteTreatmentCases?: boolean;
+  deleteInvoices?: boolean;
+}
+
+export const deletePatient = async (id: string, options?: DeletePatientOptions): Promise<boolean> => {
+  try {
+    await db.patients.delete(id, options);
+    return true;
+  } catch (error) {
+    console.error('Failed to delete patient:', error);
+    return false;
+  }
 };
+
+// Legacy alias for backward compatibility
+export const softDeletePatient = deletePatient;
 
 export const restorePatient = async (id: string): Promise<boolean> => {
   return false;
@@ -179,7 +194,11 @@ export const restorePatient = async (id: string): Promise<boolean> => {
 
 // ============ ATTACHMENTS CRUD ============
 export const getAttachmentsByPatientId = async (patientId: string): Promise<PatientAttachment[]> => {
-  const data = await window.api.dbQuery('SELECT * FROM attachments WHERE patient_id = ?', [patientId]);
+  // Use db.query to support both Local and Remote
+  const data = await db.query('SELECT * FROM attachments WHERE patient_id = ?', [patientId]);
+
+  if (!Array.isArray(data)) return [];
+
   return data.map((a: any) => ({
     id: a.id,
     patientId: a.patient_id,
@@ -192,18 +211,33 @@ export const getAttachmentsByPatientId = async (patientId: string): Promise<Pati
 };
 
 export const createAttachment = async (attachment: Omit<PatientAttachment, 'id'>): Promise<PatientAttachment> => {
-  const result = await window.api.dbInsert('attachments', {
+  console.log('[createAttachment] Validating Patient ID:', attachment.patientId);
+
+  // Validate UUID to ensure DB integrity
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!uuidRegex.test(attachment.patientId)) {
+    throw new Error(`Invalid Patient ID: ${attachment.patientId}. Expected UUID.`);
+  }
+
+  const result = await db.from('attachments').insert({
     patient_id: attachment.patientId,
     file_name: attachment.fileName,
     file_url: attachment.fileUrl,
     file_type: attachment.fileType,
     notes: attachment.notes
   });
-  return { ...attachment, id: result.data.id };
+
+  if (result.error) {
+    throw new Error(result.error);
+  }
+
+  const newId = result.data?.id || result.data?.lastInsertRowid; // Check both
+
+  return { ...attachment, id: newId };
 };
 
 export const deleteAttachment = async (id: string): Promise<boolean> => {
-  await window.api.dbDelete('attachments', id);
+  await db.from('attachments').delete().eq('id', id);
   return true;
 };
 
@@ -213,17 +247,17 @@ export const getPatientStats = async (patientId: string, email?: string | null) 
 
   const appSql = 'SELECT * FROM appointments WHERE patient_id = ?';
   const appParams = [patientId];
-  const appointmentsRes = await window.api.dbQuery(appSql, appParams);
+  const appointmentsRes = await db.query(appSql, appParams);
 
   // Invoices for paid/balance
   const invSql = 'SELECT * FROM invoices WHERE patient_id = ?';
   const invParams = [patientId];
-  const invoicesRes = await window.api.dbQuery(invSql, invParams);
+  const invoicesRes = await db.query(invSql, invParams);
 
   // Treatment Cases
   const tcSql = 'SELECT * FROM treatment_cases WHERE patient_id = ?';
   const tcParams = [patientId];
-  const treatmentCasesRes = await window.api.dbQuery(tcSql, tcParams);
+  const treatmentCasesRes = await db.query(tcSql, tcParams);
 
   const services = await db.services.getAll();
 

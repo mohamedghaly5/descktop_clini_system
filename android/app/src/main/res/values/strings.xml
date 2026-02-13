@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">DentalFlowClient</string>
+    <string name="title_activity_main">DentalFlowClient</string>
+    <string name="package_name">com.dentalflow.client</string>
+    <string name="custom_url_scheme">com.dentalflow.client</string>
+</resources>

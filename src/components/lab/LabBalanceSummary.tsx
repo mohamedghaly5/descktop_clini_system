@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { useSettings } from '@/contexts/SettingsContext';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { LabOrderOverview } from '@/services/labService';
@@ -26,6 +27,7 @@ interface LabSummary {
 
 const LabBalanceSummary: React.FC<LabBalanceSummaryProps> = ({ orders, onRefresh }) => {
     const { t, language, isRTL } = useLanguage();
+    const { hasPermission } = useAuth();
     const { formatCurrency } = useSettings();
     const [selectedLab, setSelectedLab] = React.useState<{ id: string, name: string } | null>(null);
     const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
@@ -110,15 +112,17 @@ const LabBalanceSummary: React.FC<LabBalanceSummaryProps> = ({ orders, onRefresh
                                         <div className="font-bold text-red-600 dark:text-red-400">
                                             {formatCurrency(summary.totalDebt, language)}
                                         </div>
-                                        <Button
-                                            size="sm"
-                                            variant="outline"
-                                            className="h-7 text-xs gap-1"
-                                            onClick={() => handleRecordPayment(summary.labId, summary.labName)}
-                                        >
-                                            <CreditCard className="h-3 w-3" />
-                                            {t('lab.pay') || 'Pay'}
-                                        </Button>
+                                        {hasPermission('LAB_PAYMENT') && (
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                className="h-7 text-xs gap-1"
+                                                onClick={() => handleRecordPayment(summary.labId, summary.labName)}
+                                            >
+                                                <CreditCard className="h-3 w-3" />
+                                                {t('lab.pay') || 'Pay'}
+                                            </Button>
+                                        )}
                                     </div>
                                 </div>
                             ))}

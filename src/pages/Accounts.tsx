@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { DollarSign, TrendingUp, Calendar, Download, Trash2, FileSpreadsheet } from 'lucide-react';
+import { DollarSign, TrendingUp, Calendar, Trash2, FileSpreadsheet, Wallet, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -22,9 +22,11 @@ import { toast } from '@/hooks/use-toast';
 import { formatDate } from '@/utils/format';
 
 const AccountsPage: React.FC = () => {
-  const { t, isRTL, language } = useLanguage();
+  const { t, language } = useLanguage();
   const { formatCurrency } = useSettings();
-  const { user } = useAuth();
+  const { user, hasPermission } = useAuth();
+  const canViewFinancials = hasPermission('VIEW_FINANCIAL_REPORTS');
+  const canViewPayments = hasPermission('VIEW_PAYMENTS');
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -124,128 +126,163 @@ const AccountsPage: React.FC = () => {
 
   const recentInvoices = [...invoices]
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-    .slice(0, 10);
+    .slice(0, 50); // Show more items but scrollable
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">{t('accounts')}</h1>
-          <p className="text-muted-foreground">
-            {language === 'ar' ? 'إدارة الدفعات والحسابات' : 'Manage payments and accounts'}
-          </p>
+    <div className="container mx-auto p-4 md:p-6 space-y-6 animate-fade-in pb-20 bg-gradient-to-br from-indigo-50/50 to-purple-50/50 dark:from-gray-900 dark:to-gray-800 min-h-screen rounded-3xl">
+
+      {/* Header Section */}
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 bg-card/50 p-4 rounded-2xl border backdrop-blur-sm">
+        <div className="flex items-center gap-3">
+          <div className="p-3 rounded-xl bg-gradient-to-br from-emerald-500/10 to-teal-500/10 text-emerald-600 ring-1 ring-emerald-500/20 shadow-sm">
+            <Wallet className="w-8 h-8" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-foreground">{t('accounts')}</h1>
+            <p className="text-sm text-muted-foreground">
+              {language === 'ar' ? 'إدارة الدفعات والحسابات المالية' : 'Manage payments and financial accounts'}
+            </p>
+          </div>
         </div>
-        <Button variant="outline" className="flex items-center gap-2" onClick={handleExport}>
+        <Button
+          onClick={handleExport}
+          className="w-full md:w-auto gap-2 shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/30 transition-all duration-300 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white border-0"
+        >
           <FileSpreadsheet className="w-4 h-4" />
-          {language === 'ar' ? 'تصدير بيانات إكسل شامل' : 'Export Full Excel'}
+          {language === 'ar' ? 'تصدير إكسل' : 'Export Excel'}
         </Button>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card variant="stat" className="animate-fade-in">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">{t('thisMonth')}</p>
-                <p className="text-2xl font-bold">{formatCurrency(summary.thisMonth, language)}</p>
-              </div>
-              <div className="w-12 h-12 rounded-xl gradient-primary flex items-center justify-center">
-                <DollarSign className="w-6 h-6 text-primary-foreground" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
 
-        <Card variant="stat" className="animate-fade-in delay-100" style={{ animationDelay: '100ms' }}>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">{t('lastMonth')}</p>
-                <p className="text-2xl font-bold">{formatCurrency(summary.lastMonth, language)}</p>
-              </div>
-              <div className="w-12 h-12 rounded-xl bg-secondary flex items-center justify-center">
-                <Calendar className="w-6 h-6 text-secondary-foreground" />
-              </div>
+        {/* Card 1: This Month */}
+        <div className="bg-card hover:bg-card/80 border text-card-foreground shadow-sm hover:shadow-md transition-all duration-300 rounded-2xl p-6 relative overflow-hidden group">
+          <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+            <Calendar className="w-16 h-16 text-blue-500" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-sm font-medium text-muted-foreground">{t('thisMonth')}</span>
+            <span className={cn("text-3xl font-bold text-blue-600 dark:text-blue-400 ltr-nums", !canViewFinancials && "blur-md")}>
+              {formatCurrency(summary.thisMonth, language)}
+            </span>
+            <div className="flex items-center gap-1 text-xs text-blue-600/80 mt-2 font-medium bg-blue-50 dark:bg-blue-900/20 w-fit px-2 py-1 rounded-full">
+              <ArrowUpRight className="w-3 h-3" />
+              {language === 'ar' ? 'إيرادات الشهر الحالي' : 'Current Month Revenue'}
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
 
-        <Card variant="stat" className="animate-fade-in delay-200" style={{ animationDelay: '200ms' }}>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">{language === 'ar' ? 'هذا العام' : 'This Year'}</p>
-                <p className="text-2xl font-bold">{formatCurrency(summary.thisYear, language)}</p>
-              </div>
-              <div className="w-12 h-12 rounded-xl gradient-success flex items-center justify-center">
-                <TrendingUp className="w-6 h-6 text-success-foreground" />
-              </div>
+        {/* Card 2: Last Month */}
+        <div className="bg-card hover:bg-card/80 border text-card-foreground shadow-sm hover:shadow-md transition-all duration-300 rounded-2xl p-6 relative overflow-hidden group">
+          <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+            <ArrowDownLeft className="w-16 h-16 text-purple-500" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-sm font-medium text-muted-foreground">{t('lastMonth')}</span>
+            <span className={cn("text-3xl font-bold text-purple-600 dark:text-purple-400 ltr-nums", !canViewFinancials && "blur-md")}>
+              {formatCurrency(summary.lastMonth, language)}
+            </span>
+            <div className="flex items-center gap-1 text-xs text-purple-600/80 mt-2 font-medium bg-purple-50 dark:bg-purple-900/20 w-fit px-2 py-1 rounded-full">
+              <Calendar className="w-3 h-3" />
+              {language === 'ar' ? 'الشهر السابق' : 'Previous Month'}
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
+
+        {/* Card 3: This Year */}
+        <div className="bg-card hover:bg-card/80 border text-card-foreground shadow-sm hover:shadow-md transition-all duration-300 rounded-2xl p-6 relative overflow-hidden group">
+          <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+            <TrendingUp className="w-16 h-16 text-emerald-500" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-sm font-medium text-muted-foreground">{language === 'ar' ? 'هذا العام' : 'This Year'}</span>
+            <span className={cn("text-3xl font-bold text-emerald-600 dark:text-emerald-400 ltr-nums", !canViewFinancials && "blur-md")}>
+              {formatCurrency(summary.thisYear, language)}
+            </span>
+            <div className="flex items-center gap-1 text-xs text-emerald-600/80 mt-2 font-medium bg-emerald-50 dark:bg-emerald-900/20 w-fit px-2 py-1 rounded-full">
+              <TrendingUp className="w-3 h-3" />
+              {language === 'ar' ? 'إجمالي السنة' : 'Total Year Revenue'}
+            </div>
+          </div>
+        </div>
+
       </div>
 
-      {/* Recent Payments */}
-      <Card variant="elevated" className="animate-fade-in delay-300" style={{ animationDelay: '300ms' }}>
+      {/* Recent Payments List */}
+      <Card className="border-none shadow-md bg-white/50 dark:bg-gray-900/50 backdrop-blur-sm">
         <CardHeader>
-          <CardTitle>
+          <CardTitle className="text-lg font-bold flex items-center gap-2">
+            <div className="h-6 w-1 rounded-full bg-emerald-500" />
             {language === 'ar' ? 'آخر الدفعات' : 'Recent Payments'}
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="space-y-3">
+          <div className={cn("space-y-3 transition-all duration-300", !canViewPayments && "blur-md select-none pointer-events-none")}>
             {recentInvoices.length === 0 ? (
-              <p className="text-center text-muted-foreground py-8">
-                {language === 'ar' ? 'لا توجد فواتير بعد' : 'No invoices yet'}
-              </p>
+              <div className="text-center py-20 bg-muted/20 rounded-xl border-2 border-dashed border-muted">
+                <DollarSign className="w-12 h-12 mx-auto text-muted-foreground/50 mb-3" />
+                <p className="text-muted-foreground text-lg">
+                  {language === 'ar' ? 'لا توجد فواتير بعد' : 'No invoices yet'}
+                </p>
+              </div>
             ) : (
               recentInvoices.map((invoice) => (
                 <div
                   key={invoice.id}
-                  className="flex items-center gap-4 p-4 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors"
+                  className="group flex flex-col sm:flex-row items-start sm:items-center gap-4 p-4 rounded-xl bg-card border hover:border-emerald-500/30 hover:shadow-md transition-all duration-200"
                 >
-                  {/* Amount - Start side */}
-                  <div className="min-w-[100px] text-start">
-                    <p className="font-bold text-success">{formatCurrency(invoice.amountPaid, language)}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {formatDate(invoice.date, language)}
-                    </p>
-                  </div>
-
-                  {/* Patient & Service Info - Center */}
-                  <div className="flex items-center gap-3 flex-1">
-                    <div className="w-10 h-10 rounded-full gradient-accent flex items-center justify-center shrink-0">
-                      <DollarSign className="w-5 h-5 text-accent-foreground" />
+                  {/* Icon & Amount */}
+                  <div className="flex items-center gap-4 min-w-[200px]">
+                    <div className="w-12 h-12 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 flex items-center justify-center shrink-0 shadow-sm group-hover:scale-110 transition-transform">
+                      <DollarSign className="w-6 h-6" />
                     </div>
-                    <div className="text-start flex-1">
-                      <p className="font-medium">{getPatientName(invoice.patientId)}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {language === 'ar' ? invoice.serviceNameAr : invoice.serviceName}
+                    <div>
+                      <p className="text-xl font-bold text-emerald-600 ltr-nums">{formatCurrency(invoice.amountPaid, language)}</p>
+                      <p className="text-xs text-muted-foreground font-mono bg-muted/50 px-1.5 py-0.5 rounded w-fit mt-1">
+                        {formatDate(invoice.date, language)}
                       </p>
                     </div>
                   </div>
 
-                  {/* Cost & Balance Info - End side */}
-                  <div className="min-w-[120px] text-end">
-                    <p className="text-sm text-muted-foreground">
-                      {language === 'ar' ? `التكلفة: ${invoice.cost}` : `Cost: ${invoice.cost}`}
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      {language === 'ar' ? `المتبقي: ${invoice.balance}` : `Balance: ${invoice.balance}`}
+                  {/* Patient Info */}
+                  <div className="flex-1 space-y-1">
+                    <h4 className="font-bold text-foreground">{getPatientName(invoice.patientId)}</h4>
+                    <p className="text-sm text-muted-foreground flex items-center gap-1.5">
+                      <span className="bg-secondary px-2 py-0.5 rounded text-xs">
+                        {language === 'ar' ? invoice.serviceNameAr : invoice.serviceName}
+                      </span>
                     </p>
                   </div>
 
-                  {/* Delete Button */}
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={() => handleDeleteClick(invoice)}
-                    className="text-destructive hover:bg-destructive/10 shrink-0"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
+                  {/* Details & Actions */}
+                  <div className="flex items-center justify-between w-full sm:w-auto gap-6 sm:pl-4 sm:border-l">
+                    <div className="text-end">
+                      <div className="text-xs text-muted-foreground mb-1">
+                        {language === 'ar' ? 'التكلفة الكلية' : 'Total Cost'}
+                      </div>
+                      <div className="font-medium">{invoice.cost}</div>
+                    </div>
+                    <div className="text-end">
+                      <div className="text-xs text-muted-foreground mb-1">
+                        {language === 'ar' ? 'المتبقي' : 'Balance'}
+                      </div>
+                      <div className={cn("font-medium", invoice.balance > 0 ? "text-destructive" : "text-muted-foreground")}>
+                        {invoice.balance}
+                      </div>
+                    </div>
+
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => canViewPayments && handleDeleteClick(invoice)} // Prevent click
+                      disabled={!canViewPayments}
+                      className="text-destructive/70 hover:text-destructive hover:bg-destructive/10 rounded-full h-10 w-10 transition-colors"
+                      title={language === 'ar' ? 'حذف' : 'Delete'}
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </Button>
+                  </div>
                 </div>
               ))
             )}

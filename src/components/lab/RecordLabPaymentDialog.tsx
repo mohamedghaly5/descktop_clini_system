@@ -60,7 +60,10 @@ const RecordLabPaymentDialog: React.FC<RecordLabPaymentDialogProps> = ({ open, o
             });
 
             if (result.success) {
-                toast.success(t('success') || 'Payment recorded successfully');
+                const successMsg = isRTL
+                    ? 'تم الحفظ بنجاح وإنشاء مصروف'
+                    : 'Payment recorded successfully and expense created';
+                toast.success(successMsg);
                 onSuccess();
                 onOpenChange(false);
             } else {

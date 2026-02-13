@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import { Cloud, HardDrive, RefreshCw, Shield, Download, Upload, FolderOpen, History, Trash2, Loader2, CheckCircle2, AlertTriangle, Database } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
+import { db } from '@/services/db';
 
 const BackupSettings: React.FC = () => {
     const { language } = useLanguage();
@@ -27,24 +28,33 @@ const BackupSettings: React.FC = () => {
     const [password, setPassword] = useState('');
     const [selectedCloudFileId, setSelectedCloudFileId] = useState<string | null>(null);
 
+    const [isClientMode, setIsClientMode] = useState(false);
+
     useEffect(() => {
+        checkMode();
         fetchSettings();
         fetchCloudStatus();
     }, []);
 
-    const fetchSettings = async () => {
+    const checkMode = async () => {
+        // @ts-ignore
+        if (!window.electron) {
+            setIsClientMode(true);
+            return;
+        }
         try {
             // @ts-ignore
-            const schedule = await window.electron.ipcRenderer.invoke('settings:get-backup-schedule');
-            setBackupSchedule(schedule || 'manual');
+            const status = await window.electron.ipcRenderer.invoke('system:get-status');
+            if (status && status.mode === 'client') setIsClientMode(true);
+        } catch (e) { }
+    };
 
-            // @ts-ignore
-            const path = await window.electron.ipcRenderer.invoke('backup:get-local-path');
-            setLocalPath(path || '');
-
-            // @ts-ignore
-            const lastDate = await window.electron.ipcRenderer.invoke('backup:get-last-date');
-            setLastBackupDate(lastDate);
+    const fetchSettings = async () => {
+        try {
+            const config = await db.backup.getConfig();
+            setBackupSchedule(config.schedule || 'manual');
+            setLocalPath(config.localPath || '');
+            setLastBackupDate(config.lastBackupDate);
         } catch (e) {
             console.error(e);
         }
@@ -52,12 +62,10 @@ const BackupSettings: React.FC = () => {
 
     const fetchCloudStatus = async () => {
         try {
-            // @ts-ignore
-            const user = await window.electron.ipcRenderer.invoke('backup:get-user');
+            const user = await db.backup.getCloudUser();
             setCloudUser(user);
             if (user) {
-                // @ts-ignore
-                const files = await window.electron.ipcRenderer.invoke('backup:list-cloud');
+                const files = await db.backup.listCloudFiles();
                 setCloudFiles(files);
             }
         } catch (e) {
@@ -66,10 +74,13 @@ const BackupSettings: React.FC = () => {
     };
 
     const handleCloudAuth = async () => {
+        if (isClientMode) {
+            toast.error(isRtl ? 'يرجى تسجيل الدخول من جهاز السيرفر' : 'Please sign in from the server device');
+            return;
+        }
         setLoading(true);
         try {
-            // @ts-ignore
-            const success = await window.electron.ipcRenderer.invoke('backup:start-auth');
+            const success = await db.backup.startAuth();
             if (success) {
                 await fetchCloudStatus();
                 toast.success(isRtl ? 'تم تسجيل الدخول بنجاح' : 'Authenticated successfully');
@@ -84,9 +95,9 @@ const BackupSettings: React.FC = () => {
     };
 
     const handleSelectLocalPath = async () => {
+        if (isClientMode) return;
         try {
-            // @ts-ignore
-            const path = await window.electron.ipcRenderer.invoke('backup:set-local-path');
+            const path = await db.backup.setLocalPath();
             if (path) setLocalPath(path);
         } catch (e) {
             console.error(e);
@@ -94,9 +105,10 @@ const BackupSettings: React.FC = () => {
     };
 
     const handleScheduleChange = async (val: string) => {
+        if (isClientMode) return;
         setBackupSchedule(val);
         // @ts-ignore
-        await window.electron.ipcRenderer.invoke('settings:set-backup-schedule', val);
+        await db.backup.setSchedule(val);
         toast.success(isRtl ? 'تم تحديث الجدول' : 'Schedule updated');
     };
 
@@ -116,15 +128,21 @@ const BackupSettings: React.FC = () => {
         try {
             let result;
             if (passwordAction === 'backup') {
-                // @ts-ignore
-                result = await window.electron.ipcRenderer.invoke('backup:create', { password: password || undefined });
+                result = await db.backup.create(password || undefined);
                 if (result.success) {
                     toast.success(isRtl ? 'تم إنشاء النسخة الاحتياطية' : 'Backup created successfully', { id: toastId });
                     fetchSettings();
                     // Also backup to cloud if authenticated
-                    if (cloudUser) {
-                        // @ts-ignore
-                        await window.electron.ipcRenderer.invoke('backup:cloud-now', { password: password || undefined });
+                    if (cloudUser && !isClientMode) {
+                        // In client mode, we might want to trigger cloud backup too? 
+                        // The user said "He can only make a backup command... he cannot restore".
+                        // Let's allow cloud trigger if connected.
+                        await db.backup.createCloud(password || undefined);
+                        fetchCloudStatus();
+                        toast.success(isRtl ? 'تم الرفع للسحابة' : 'Uploaded to Cloud successfully');
+                    } else if (cloudUser && isClientMode) {
+                        // Try remote cloud trigger
+                        await db.backup.createCloud(password || undefined);
                         fetchCloudStatus();
                         toast.success(isRtl ? 'تم الرفع للسحابة' : 'Uploaded to Cloud successfully');
                     }
@@ -132,8 +150,8 @@ const BackupSettings: React.FC = () => {
                     toast.error(result.error || (isRtl ? 'فشل الإنشاء' : 'Creation failed'), { id: toastId });
                 }
             } else if (passwordAction === 'restore-local') {
-                // @ts-ignore
-                result = await window.electron.ipcRenderer.invoke('backup:restore-local', { password: password || undefined });
+                if (isClientMode) throw new Error("Client restore disabled");
+                result = await db.backup.restoreLocal(password || undefined);
                 if (result.success) {
                     toast.success(isRtl ? 'تم الاستعادة. سيتم إعادة التشغيل...' : 'Restored. Restarting...', { id: toastId });
                 } else if (result.reason === 'canceled') {
@@ -142,11 +160,8 @@ const BackupSettings: React.FC = () => {
                     toast.error(result.error || (isRtl ? 'كلمة المرور غير صحيحة أو ملف تالف' : 'Invalid password or corrupt file'), { id: toastId });
                 }
             } else if (passwordAction === 'restore-cloud') {
-                // @ts-ignore
-                result = await window.electron.ipcRenderer.invoke('backup:restore', {
-                    fileId: selectedCloudFileId,
-                    password: password || undefined
-                });
+                if (isClientMode) throw new Error("Client restore disabled");
+                result = await db.backup.restoreCloud(selectedCloudFileId!, password || undefined);
                 if (result.success) {
                     toast.success(isRtl ? 'تم الاستعادة. سيتم إعادة التشغيل...' : 'Restored. Restarting...', { id: toastId });
                 } else {
@@ -167,12 +182,12 @@ const BackupSettings: React.FC = () => {
         if (!confirm(isRtl ? 'هل أنت متأكد؟' : 'Are you sure?')) return;
         setLoading(true);
         try {
-            // @ts-ignore
-            await window.electron.ipcRenderer.invoke('backup:delete-cloud', { fileId });
+            if (isClientMode) throw new Error(isRtl ? 'غير متاح في وضع العميل' : 'Not available in client mode');
+            await db.backup.deleteCloud(fileId);
             fetchCloudStatus();
             toast.success(isRtl ? 'تم الحذف' : 'Deleted');
-        } catch (e) {
-            toast.error('Error');
+        } catch (e: any) {
+            toast.error(e.message || 'Error');
         } finally {
             setLoading(false);
         }
@@ -198,14 +213,14 @@ const BackupSettings: React.FC = () => {
                                 <Label>{isRtl ? 'مسار مجلد النسخ الاحتياطي' : 'Backup Folder Path'}</Label>
                                 <div className="flex gap-2">
                                     <Input value={localPath || (isRtl ? 'المجلد الافتراضي' : 'Default Folder')} readOnly className="bg-muted" />
-                                    <Button variant="outline" onClick={handleSelectLocalPath}>
+                                    <Button variant="outline" onClick={handleSelectLocalPath} disabled={isClientMode} title={isClientMode ? (isRtl ? 'غير متاح في وضع العميل' : 'Not available in client mode') : ''}>
                                         <FolderOpen className="w-4 h-4" />
                                     </Button>
                                 </div>
                             </div>
                             <div className="flex-1 w-full space-y-2">
                                 <Label>{isRtl ? 'جدولة النسخ التلقائي' : 'Automatic Backup Schedule'}</Label>
-                                <Select value={backupSchedule} onValueChange={handleScheduleChange}>
+                                <Select value={backupSchedule} onValueChange={handleScheduleChange} disabled={isClientMode}>
                                     <SelectTrigger>
                                         <SelectValue />
                                     </SelectTrigger>
@@ -224,10 +239,12 @@ const BackupSettings: React.FC = () => {
                                 <Upload className="w-4 h-4 me-2" />
                                 {isRtl ? 'إنشاء نسخة احتياطية الآن' : 'Create Backup Now'}
                             </Button>
-                            <Button onClick={() => initiateAction('restore-local')} disabled={loading} variant="outline" className="flex-1">
-                                <History className="w-4 h-4 me-2" />
-                                {isRtl ? 'استعادة من ملف محلي' : 'Restore from Local File'}
-                            </Button>
+                            {!isClientMode && (
+                                <Button onClick={() => initiateAction('restore-local')} disabled={loading} variant="outline" className="flex-1">
+                                    <History className="w-4 h-4 me-2" />
+                                    {isRtl ? 'استعادة من ملف محلي' : 'Restore from Local File'}
+                                </Button>
+                            )}
                         </div>
 
                         {lastBackupDate && (
@@ -258,9 +275,19 @@ const BackupSettings: React.FC = () => {
                                 <p className="text-muted-foreground">
                                     {isRtl ? 'قم بربط حسابك لحفظ البيانات سحابياً' : 'Connect your account to save data to the cloud'}
                                 </p>
-                                <Button onClick={handleCloudAuth} disabled={loading}>
-                                    {isRtl ? 'تسجيل الدخول باستخدام Google' : 'Sign in with Google'}
-                                </Button>
+
+                                {isClientMode ? (
+                                    <div className="p-4 bg-yellow-50 text-yellow-800 rounded-lg border border-yellow-200 text-sm">
+                                        <AlertTriangle className="w-4 h-4 inline-block me-2" />
+                                        {isRtl
+                                            ? 'يرجي ربط حساب Google Drive من جهاز السيرفر الرئيسي أولاً.'
+                                            : 'Please link Google Drive from the main Server application.'}
+                                    </div>
+                                ) : (
+                                    <Button onClick={handleCloudAuth} disabled={loading}>
+                                        {isRtl ? 'تسجيل الدخول باستخدام Google' : 'Sign in with Google'}
+                                    </Button>
+                                )}
                             </div>
                         ) : (
                             <div className="space-y-6">
@@ -310,22 +337,26 @@ const BackupSettings: React.FC = () => {
                                                         </div>
                                                     </div>
                                                     <div className="flex items-center gap-1">
-                                                        <Button
-                                                            variant="ghost"
-                                                            size="sm"
-                                                            onClick={() => initiateAction('restore-cloud', file.id)}
-                                                            className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-                                                        >
-                                                            {isRtl ? 'استعادة' : 'Restore'}
-                                                        </Button>
-                                                        <Button
-                                                            variant="ghost"
-                                                            size="icon"
-                                                            onClick={() => handleDeleteCloud(file.id)}
-                                                            className="text-red-500 hover:text-red-600 hover:bg-red-50"
-                                                        >
-                                                            <Trash2 className="w-4 h-4" />
-                                                        </Button>
+                                                        {!isClientMode && (
+                                                            <>
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    size="sm"
+                                                                    onClick={() => initiateAction('restore-cloud', file.id)}
+                                                                    className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                                                >
+                                                                    {isRtl ? 'استعادة' : 'Restore'}
+                                                                </Button>
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    size="icon"
+                                                                    onClick={() => handleDeleteCloud(file.id)}
+                                                                    className="text-red-500 hover:text-red-600 hover:bg-red-50"
+                                                                >
+                                                                    <Trash2 className="w-4 h-4" />
+                                                                </Button>
+                                                            </>
+                                                        )}
                                                     </div>
                                                 </div>
                                             ))

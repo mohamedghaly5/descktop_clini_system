@@ -8,7 +8,23 @@ import { cn } from '@/lib/utils';
 
 const MainLayout: React.FC = () => {
   const navigate = useNavigate();
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    // Default to collapsed in Browser Mode or Mobile to save space
+    const isClient = !(window as any).electron;
+    const isMobile = window.innerWidth < 1024;
+    return isClient || isMobile;
+  });
+
+  // Listen for screen resize to auto-collapse on smaller screens
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth < 1024 && !sidebarCollapsed) {
+        setSidebarCollapsed(true);
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
 
 

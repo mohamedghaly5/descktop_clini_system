@@ -4,6 +4,7 @@ import { Calendar, DollarSign, AlertTriangle, Star, TrendingDown } from 'lucide-
 import { Card } from '@/components/ui/card';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useSettings } from '@/contexts/SettingsContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 import { Appointment, Invoice } from '@/services/appointmentService';
 import { Expense } from '@/hooks/useExpenses';
@@ -25,6 +26,8 @@ const DashboardKPICards: React.FC<DashboardKPICardsProps> = ({
   const navigate = useNavigate();
   const { language, t } = useLanguage();
   const { formatCurrency, getCurrencySymbol } = useSettings();
+  const { hasPermission } = useAuth();
+  const canViewFinancials = hasPermission('VIEW_FINANCIAL_REPORTS');
 
   // Calculate KPIs
   const attendedToday = todayAppointments.filter(a => a.status === 'attended').length;
@@ -98,6 +101,7 @@ const DashboardKPICards: React.FC<DashboardKPICardsProps> = ({
       gradient: 'gradient-success',
       onClick: () => navigate('/accounts'),
       clickable: true,
+      isFinancial: true,
     },
     {
       title: t('expenses.summary.daily'),
@@ -106,6 +110,7 @@ const DashboardKPICards: React.FC<DashboardKPICardsProps> = ({
       gradient: 'bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-400',
       onClick: () => navigate('/expenses'),
       clickable: true,
+      isFinancial: true,
     },
     {
       title: language === 'ar' ? 'الرصيد المستحق' : 'Outstanding Balance',
@@ -114,6 +119,7 @@ const DashboardKPICards: React.FC<DashboardKPICardsProps> = ({
       gradient: 'gradient-accent',
       onClick: () => navigate('/accounts'),
       clickable: true,
+      isFinancial: true,
     },
     {
       title: language === 'ar' ? 'الخدمة الأكثر اليوم' : 'Top Service Today',
@@ -155,7 +161,12 @@ const DashboardKPICards: React.FC<DashboardKPICardsProps> = ({
 
           {/* Body: Numbers and Stats */}
           <div className="space-y-1">
-            <p className="text-2xl font-bold text-foreground ltr-nums">{kpi.value}</p>
+            <p className={cn(
+              "text-2xl font-bold text-foreground ltr-nums",
+              kpi.isFinancial && !canViewFinancials && "blur-md select-none opacity-50"
+            )}>
+              {kpi.value}
+            </p>
 
             {kpi.subItems && (
               <div className="flex flex-wrap gap-2 pt-1">

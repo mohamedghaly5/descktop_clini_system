@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode, useCa
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/services/db';
+import { settingsService } from '@/services/settingsService';
 
 export interface Service {
   id: string;
@@ -121,7 +122,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
     try {
       // 1. Fetch Local Data
       try {
-        const { data: localData } = await window.electron.ipcRenderer.invoke('settings:getClinicInfo');
+        const localData = await settingsService.getClinicInfo();
         if (localData) {
           setClinicInfo({
             id: localData.id,
@@ -345,7 +346,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
       currency: code
     };
     try {
-      await window.electron.ipcRenderer.invoke('settings:syncClinicInfo', syncData);
+      await settingsService.syncClinicInfo(syncData);
     } catch (e) {
       console.error('Local sync failed', e);
     }
@@ -358,7 +359,8 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
 
   const formatCurrency = (amount: number, language: 'en' | 'ar') => {
     const symbol = getCurrencySymbol(language);
-    return `${symbol} ${amount.toLocaleString()}`;
+    const safeAmount = (amount === undefined || amount === null || isNaN(amount)) ? 0 : amount;
+    return `${symbol} ${safeAmount.toLocaleString()}`;
   };
 
   // Clinic Info methods
@@ -378,9 +380,8 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
         currency: currency // Include currency from current state to ensure consistency
       };
 
-      await window.electron.ipcRenderer.invoke('settings:save-clinic-info', syncData);
-
       // Note: Cloud sync removed as per user request. Local only.
+      await settingsService.syncClinicInfo(syncData);
     } catch (error) {
       console.error('Failed to update clinic info:', error);
       // Optional: Rollback state if save fails, but for settings, usually we just log error

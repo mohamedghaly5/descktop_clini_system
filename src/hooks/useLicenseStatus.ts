@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { db } from '@/services/db';
 
 export type LicenseStatus = 'active' | 'grace' | 'expired' | 'invalid' | 'support_unlock';
 
@@ -21,8 +22,7 @@ export const useLicenseStatus = () => {
 
     const checkStatus = async () => {
         try {
-            // @ts-ignore
-            const state = await window.api.getLicenseStatus();
+            const state = await db.license.getStatus();
             setStatus(state);
         } catch (error) {
             console.error('Failed to get license status', error);

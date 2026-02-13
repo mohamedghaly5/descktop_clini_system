@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { useSettings } from '@/contexts/SettingsContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,6 +15,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 
 const LabServicesSettings: React.FC = () => {
     const { t, language, isRTL } = useLanguage();
+    const { hasPermission } = useAuth();
+    const canEdit = hasPermission('CLINIC_SETTINGS');
     const { formatCurrency } = useSettings();
     const [labs, setLabs] = useState<Lab[]>([]);
     const [selectedLabId, setSelectedLabId] = useState<string>('');
@@ -130,18 +133,18 @@ const LabServicesSettings: React.FC = () => {
                         </Select>
 
                         {selectedLabId && (
-                            <Button variant="ghost" size="icon" className="text-destructive" onClick={handleDeleteLab} title="Delete Lab">
+                            <Button variant="ghost" size="icon" className="text-destructive" onClick={handleDeleteLab} title="Delete Lab" disabled={!canEdit}>
                                 <Trash2 className="h-4 w-4" />
                             </Button>
                         )}
                     </div>
 
-                    <Button onClick={() => setIsAddLabOpen(true)} variant="outline" className="gap-2 shrink-0">
+                    <Button onClick={() => setIsAddLabOpen(true)} variant="outline" className="gap-2 shrink-0" disabled={!canEdit}>
                         <Plus className="h-4 w-4" />
                         Add Lab
                     </Button>
 
-                    <Button onClick={handleAdd} className="gap-2 shrink-0">
+                    <Button onClick={handleAdd} className="gap-2 shrink-0" disabled={!canEdit}>
                         <Plus className="h-4 w-4" />
                         {t('settings.labServices.add')}
                     </Button>
@@ -174,14 +177,14 @@ const LabServicesSettings: React.FC = () => {
                                         <TableCell className="text-center">
                                             <Badge
                                                 variant={service.is_active ? 'default' : 'secondary'}
-                                                className="cursor-pointer"
-                                                onClick={() => toggleStatus(service)}
+                                                className={`cursor-pointer ${!canEdit ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                                onClick={() => canEdit && toggleStatus(service)}
                                             >
                                                 {service.is_active ? t('settings.labServices.active') : t('settings.labServices.inactive')}
                                             </Badge>
                                         </TableCell>
                                         <TableCell className="text-end">
-                                            <Button variant="ghost" size="sm" onClick={() => handleEdit(service)}>
+                                            <Button variant="ghost" size="sm" onClick={() => handleEdit(service)} disabled={!canEdit}>
                                                 <Edit2 className="h-4 w-4" />
                                             </Button>
                                         </TableCell>

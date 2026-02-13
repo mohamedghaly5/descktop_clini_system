@@ -35,6 +35,14 @@ export class GoogleDriveService {
         }
         return false; // Need to start flow
     }
+    async verifyCode(code) {
+        if (!this.oAuth2Client)
+            throw new Error('Client not initialized');
+        const { tokens } = await this.oAuth2Client.getToken(code);
+        this.oAuth2Client.setCredentials(tokens);
+        store.set(TOKEN_PATH, tokens);
+        return true;
+    }
     async startAuthFlow() {
         if (!this.oAuth2Client)
             throw new Error('Client not initialized');
@@ -67,6 +75,21 @@ export class GoogleDriveService {
                 shell.openExternal(authUrl);
             });
         });
+    }
+    getAuthUrl() {
+        if (!this.oAuth2Client)
+            throw new Error('Client not initialized');
+        return this.oAuth2Client.generateAuthUrl({
+            access_type: 'offline',
+            scope: SCOPES,
+        });
+    }
+    async logout() {
+        store.delete(TOKEN_PATH);
+        if (this.oAuth2Client) {
+            // Reset credentials
+            this.loadCredentials();
+        }
     }
     async isAuthenticated() {
         if (!this.oAuth2Client)

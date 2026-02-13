@@ -17,6 +17,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { useSettings } from '@/contexts/SettingsContext';
+import { db } from '@/services/db';
 
 interface DailyReportDialogProps {
   open: boolean;
@@ -40,7 +41,7 @@ const DailyReportDialog: React.FC<DailyReportDialogProps> = ({ open, onOpenChang
     const fetchReport = async () => {
       setLoading(true);
       try {
-        const data = await window.api.getDailyReport(selectedDate, email);
+        const data = await db.reports.getDaily(selectedDate, email);
         setReportData(data);
       } catch (e) {
         console.error("Failed to load daily report", e);

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,12 +20,35 @@ import {
 import { useNavigate } from 'react-router-dom';
 
 const LicenseSettings = () => {
-    const { status, isLoading, activate } = useLicenseStatus();
+    const { status, isLoading, activate, refresh } = useLicenseStatus();
+    const { hasPermission } = useAuth();
+    const canManageLicense = hasPermission('MANAGE_LICENSE');
     const [key, setKey] = useState('');
     const [isActivating, setIsActivating] = useState(false);
     const [result, setResult] = useState<{ success: boolean, message?: string } | null>(null);
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+    const [isClientMode, setIsClientMode] = useState(false);
     const navigate = useNavigate();
+
+    // Check system mode on mount
+    React.useEffect(() => {
+        const checkMode = async () => {
+            try {
+                // @ts-ignore
+                if ((window as any).electron && (window as any).electron.ipcRenderer) {
+                    // @ts-ignore
+                    const status = await window.electron.ipcRenderer.invoke('system:get-status');
+                    if (status && status.mode === 'client') {
+                        setIsClientMode(true);
+                    }
+                } else {
+                    // Browser mode is effectively client mode (no direct license management)
+                    setIsClientMode(true);
+                }
+            } catch (e) { console.error('Failed to check system status:', e); }
+        };
+        checkMode();
+    }, []);
 
     const handleActivate = async () => {
         if (!key.trim()) return;
@@ -134,65 +158,75 @@ const LicenseSettings = () => {
                         </div>
                     )}
 
-                    <div className="pt-2 flex justify-end">
-                        <Button variant="outline" size="sm" onClick={() => activate(status?.licenseKeyMasked || '') /* quick hack to re-trigger check if we had a key, but better to have separate verify method */} >
+                    <div className="pt-2 flex justify-end gap-2">
+                        <Button variant="ghost" size="sm" onClick={refresh}>
+                            <Loader2 className={cn("w-4 h-4", isLoading && "animate-spin")} />
+                            <span className="sr-only">تحديث</span>
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={() => activate(status?.licenseKeyMasked || '')} disabled={!canManageLicense}>
                             تحقق من الحالة
                         </Button>
                     </div>
                 </CardContent>
             </Card>
 
-            <Card className="animate-fade-in" style={{ animationDelay: '100ms' }}>
-                <CardHeader>
-                    <div className="text-start">
-                        <CardTitle>تفعيل رخصة جديدة</CardTitle>
-                        <CardDescription>أدخل مفتاح المنتج لتجديد الاشتراك</CardDescription>
-                    </div>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    <div className="flex gap-3">
-                        <div className="relative flex-1">
-                            <Key className="absolute right-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                            <Input
-                                placeholder="XXXX-XXXX-XXXX-XXXX"
-                                value={key}
-                                onChange={(e) => setKey(e.target.value)}
-                                disabled={isActivating}
-                                className="pr-9 font-mono text-center uppercase tracking-widest"
-                                dir="ltr"
-                            />
+            {canManageLicense && !isClientMode && (
+                <Card className="animate-fade-in" style={{ animationDelay: '100ms' }}>
+                    <CardHeader>
+                        <div className="text-start">
+                            <CardTitle>تفعيل رخصة جديدة</CardTitle>
+                            <CardDescription>أدخل مفتاح المنتج لتجديد الاشتراك</CardDescription>
                         </div>
-                        <Button
-                            onClick={handleActivate}
-                            disabled={isActivating || !key}
-                            className="min-w-[120px]"
-                        >
-                            {isActivating ? <Loader2 className="animate-spin h-4 w-4" /> : 'تفعيل'}
-                        </Button>
-                    </div>
-
-                    {result && (
-                        <div className={cn(
-                            "flex items-center gap-2 p-4 rounded-xl border animate-in slide-in-from-top-2",
-                            result.success
-                                ? "bg-green-500/10 border-green-500/20 text-green-700 dark:text-green-400"
-                                : "bg-destructive/10 border-destructive/20 text-destructive"
-                        )}>
-                            {result.success ? <CheckCircle className="h-5 w-5" /> : <XCircle className="h-5 w-5" />}
-                            <span className="font-medium text-sm">
-                                {result.success ? 'تم تفعيل الرخصة بنجاح! شكراً لك.' : (result.message || 'حدث خطأ غير متوقع')}
-                            </span>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        <div className="flex gap-3">
+                            <div className="relative flex-1">
+                                <Key className="absolute right-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                    placeholder="XXXX-XXXX-XXXX-XXXX"
+                                    value={key}
+                                    onChange={(e) => setKey(e.target.value)}
+                                    disabled={isActivating}
+                                    className="pr-9 font-mono text-center uppercase tracking-widest"
+                                    dir="ltr"
+                                />
+                            </div>
+                            <Button
+                                onClick={handleActivate}
+                                disabled={isActivating || !key}
+                                className="min-w-[120px]"
+                            >
+                                {isActivating ? <Loader2 className="animate-spin h-4 w-4" /> : 'تفعيل'}
+                            </Button>
                         </div>
-                    )}
-                </CardContent>
-            </Card>
 
-            <div className="flex justify-end pt-4">
-                <Button variant="ghost" className="text-destructive hover:bg-destructive/10 hover:text-destructive gap-2" onClick={() => setDeleteDialogOpen(true)}>
-                    <LogOut className="w-4 h-4" />
-                    حذف الترخيص من هذا الجهاز
-                </Button>
-            </div>
+                        {result && (
+                            <div className={cn(
+                                "flex items-center gap-2 p-4 rounded-xl border animate-in slide-in-from-top-2",
+                                result.success
+                                    ? "bg-green-500/10 border-green-500/20 text-green-700 dark:text-green-400"
+                                    : "bg-destructive/10 border-destructive/20 text-destructive"
+                            )}>
+                                {result.success ? <CheckCircle className="h-5 w-5" /> : <XCircle className="h-5 w-5" />}
+                                <span className="font-medium text-sm">
+                                    {result.success ? 'تم تفعيل الرخصة بنجاح! شكراً لك.' : (result.message || 'حدث خطأ غير متوقع')}
+                                </span>
+                            </div>
+                        )}
+                    </CardContent>
+                </Card>
+            )}
+
+            {canManageLicense && !isClientMode && (
+                <div className="flex justify-end pt-4">
+                    <Button variant="ghost" className="text-destructive hover:bg-destructive/10 hover:text-destructive gap-2" onClick={() => setDeleteDialogOpen(true)}>
+                        <LogOut className="w-4 h-4" />
+                        حذف الترخيص من هذا الجهاز
+                    </Button>
+                </div>
+            )}
+
+            {/* Render logic with client mode check inside useEffect */}
 
             <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
                 <AlertDialogContent>

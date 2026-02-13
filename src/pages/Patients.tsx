@@ -28,6 +28,7 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/integrations/supabase/client';
 import ImportPatientsDialog from '@/components/patients/ImportPatientsDialog';
+import ExportVcfDialog from '@/components/patients/ExportVcfDialog';
 
 // interface Patient defined in service
 import {
@@ -93,18 +94,12 @@ const PatientsPage: React.FC = () => {
     return name.toLowerCase().includes(query) || patient.phone.includes(query);
   });
 
-  const exportToVCF = () => {
-    const vcfContent = filteredPatients.map(p =>
-      `BEGIN:VCARD\nVERSION:3.0\nFN:${getPatientName(p)}\nTEL:${p.phone}\nEND:VCARD`
-    ).join('\n');
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
 
-    const blob = new Blob([vcfContent], { type: 'text/vcard' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'patients.vcf';
-    a.click();
-    URL.revokeObjectURL(url);
+  // ... (keep resetForm and others)
+
+  const handleExportClick = () => {
+    setExportDialogOpen(true);
   };
 
   const resetForm = () => {
@@ -171,10 +166,12 @@ const PatientsPage: React.FC = () => {
     } catch (error) {
       console.error('Error creating patient:', error);
       setIsSubmitting(false);
+      const isLicenseError = error.message?.includes('انتهت صلاحية الاشتراك');
       toast({
         title: language === 'ar' ? 'خطأ' : 'Error',
-        description: language === 'ar' ? 'فشل في إضافة المريض' : 'Failed to add patient',
+        description: error.message || (language === 'ar' ? 'فشل في إضافة المريض' : 'Failed to add patient'),
         variant: 'destructive',
+        duration: isLicenseError ? 4000 : 1500,
       });
     }
   };
@@ -194,10 +191,7 @@ const PatientsPage: React.FC = () => {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="ghost" size="icon" onClick={loadPatients} title={language === 'ar' ? 'تحديث' : 'Refresh'}>
-            <RefreshCw className="w-4 h-4" />
-          </Button>
-          <Button variant="outline" onClick={exportToVCF}>
+          <Button variant="outline" onClick={() => setExportDialogOpen(true)}>
             <Download className="w-4 h-4" />
             <span className="hidden sm:inline">{language === 'ar' ? 'تصدير VCF' : 'Export VCF'}</span>
           </Button>
@@ -205,7 +199,12 @@ const PatientsPage: React.FC = () => {
             <Upload className="w-4 h-4" />
             <span className="hidden sm:inline">{language === 'ar' ? 'استيراد من إكسيل' : 'Import from Excel'}</span>
           </Button>
-          <Button variant="gradient" onClick={() => setCreateDialogOpen(true)}>
+          <Button
+            variant="gradient"
+            onClick={() => setCreateDialogOpen(true)}
+            disabled={!useAuth().hasPermission('ADD_PATIENT')}
+            title={!useAuth().hasPermission('ADD_PATIENT') ? (language === 'ar' ? 'ليس لديك صلاحية' : 'No Permission') : ''}
+          >
             <Plus className="w-4 h-4" />
             {t('newPatient')}
           </Button>
@@ -405,6 +404,12 @@ const PatientsPage: React.FC = () => {
         open={importDialogOpen}
         onOpenChange={setImportDialogOpen}
         onImportComplete={loadPatients}
+      />
+      {/* Export VCF Dialog */}
+      <ExportVcfDialog
+        open={exportDialogOpen}
+        onOpenChange={setExportDialogOpen}
+        patients={patients}
       />
     </div>
   );

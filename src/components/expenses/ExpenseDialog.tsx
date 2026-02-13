@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { toast } from 'sonner';
+import { db } from '@/services/db';
 
 interface Expense {
     id?: string;
@@ -29,6 +30,17 @@ interface ExpenseDialogProps {
 }
 
 import { EXPENSE_CATEGORIES } from '@/constants/expenseCategories';
+
+// Helper for non-secure contexts (HTTP)
+function generateUUID() {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        return crypto.randomUUID();
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+        var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
+}
 
 const ExpenseDialog: React.FC<ExpenseDialogProps> = ({ open, onOpenChange, expenseToEdit, onSave }) => {
     const { t, isRTL } = useLanguage();
@@ -64,8 +76,7 @@ const ExpenseDialog: React.FC<ExpenseDialogProps> = ({ open, onOpenChange, expen
         try {
             if (expenseToEdit?.id) {
                 // Update
-                // @ts-ignore
-                const result = await window.api.updateExpense(expenseToEdit.id, formData);
+                const result = await db.expenses.update(expenseToEdit.id, formData);
                 if (result.success) {
                     toast.success(t('expenses.toast.updated'));
                     onSave();
@@ -73,12 +84,13 @@ const ExpenseDialog: React.FC<ExpenseDialogProps> = ({ open, onOpenChange, expen
                 } else {
                     toast.error(t('error'));
                 }
+
+
             } else {
                 // Create
-                // @ts-ignore
-                const result = await window.api.createExpense({
+                const result = await db.expenses.create({
                     ...formData,
-                    id: crypto.randomUUID()
+                    id: generateUUID()
                 });
                 if (result.success) {
                     toast.success(t('expenses.toast.added'));

@@ -53,7 +53,13 @@ const Header: React.FC<HeaderProps> = ({ sidebarCollapsed }) => {
     if (!user) return;
     try {
       // @ts-ignore
-      const result = await window.api.getNotifications(user.id);
+      let result;
+      if (window.api && window.api.getNotifications) {
+        result = await window.api.getNotifications(user.id);
+      } else {
+        // Web/Mobile fallback (empty for now)
+        result = { success: true, data: [] };
+      }
 
       if (result.success && result.data) {
         const localReadIds = JSON.parse(localStorage.getItem('read_notifications') || '[]');
@@ -75,14 +81,18 @@ const Header: React.FC<HeaderProps> = ({ sidebarCollapsed }) => {
     }
   }, [user]);
 
-  // Initial Fetch
+  // Initial Fetch & Polling
   useEffect(() => {
     fetchNotifications();
     const handleOnline = () => fetchNotifications();
     window.addEventListener('online', handleOnline);
 
+    // Poll every 30 seconds
+    const intervalId = setInterval(fetchNotifications, 30000);
+
     return () => {
       window.removeEventListener('online', handleOnline);
+      clearInterval(intervalId);
     };
   }, [fetchNotifications]);
 

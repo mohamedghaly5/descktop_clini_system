@@ -63,7 +63,7 @@ export const MarkAttendedDialog: React.FC<MarkAttendedDialogProps> = ({
 }) => {
   const { language, isRTL } = useLanguage();
   // const { services, getCurrencySymbol, activeDoctors, getDoctorById } = useSettings(); // Removed
-  const { user } = useAuth();
+  const { user, hasPermission } = useAuth();
   const [activeCases, setActiveCases] = useState<TreatmentCase[]>([]);
 
   // Local State replacement for SettingsContext
@@ -73,32 +73,28 @@ export const MarkAttendedDialog: React.FC<MarkAttendedDialogProps> = ({
   useEffect(() => {
     if (open) {
       // Fetch Doctors
-      // @ts-ignore
-      if (window.electron && window.electron.ipcRenderer) {
-        // @ts-ignore
-        window.electron.ipcRenderer.invoke('doctors:getAll')
-          .then((data: any) => {
-            if (Array.isArray(data)) {
-              setDoctors(data);
-            }
-          })
-          .catch((err: any) => console.error("Failed to load doctors", err));
+      db.doctors.getAll(user?.email)
+        .then((data: any) => {
+          if (Array.isArray(data)) {
+            setDoctors(data);
+          }
+        })
+        .catch((err: any) => console.error("Failed to load doctors", err));
 
-        // @ts-ignore
-        window.electron.ipcRenderer.invoke('services:getAll')
-          .then((data: any) => {
-            if (Array.isArray(data)) {
-              // Map if necessary, assuming raw DB rows
-              setServices(data.map((s: any) => ({
-                ...s,
-                defaultPrice: s.default_price // Map snake to camel
-              })));
-            }
-          })
-          .catch((err: any) => console.error("Failed to load services", err));
-      }
+      // Fetch Services
+      db.services.getAll(user?.email)
+        .then((data: any) => {
+          if (Array.isArray(data)) {
+            // Map if necessary, assuming raw DB rows
+            setServices(data.map((s: any) => ({
+              ...s,
+              defaultPrice: s.default_price // Map snake to camel if needed
+            })));
+          }
+        })
+        .catch((err: any) => console.error("Failed to load services", err));
     }
-  }, [open]);
+  }, [open, user?.email]);
 
   const getCurrencySymbol = (lang: string) => lang === 'ar' ? 'ج.م' : 'EGP';
   const currencySymbol = getCurrencySymbol(language as 'en' | 'ar');
@@ -121,6 +117,7 @@ export const MarkAttendedDialog: React.FC<MarkAttendedDialogProps> = ({
 
   useEffect(() => {
     if (appointment) {
+      console.log('MarkAttendedDialog: Appointment Data:', appointment);
       getActiveTreatmentCasesByPatient(appointment.patientId, user?.email).then(cases => {
         setActiveCases(cases);
 
@@ -132,6 +129,8 @@ export const MarkAttendedDialog: React.FC<MarkAttendedDialogProps> = ({
         // Auto-select first active doctor
         const defaultDoctorId = doctors.length > 0 ? doctors[0].id : '';
         const appointmentDoctorId = appointment.doctorId || defaultDoctorId;
+
+        console.log('MarkAttendedDialog: Resolved Doctor ID:', appointmentDoctorId, 'Default:', defaultDoctorId, 'Original:', appointment.doctorId);
 
         setFormData({
           treatmentCaseId: 'new',
@@ -206,6 +205,15 @@ export const MarkAttendedDialog: React.FC<MarkAttendedDialogProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     console.log('MarkAttendedDialog: Submit button clicked');
+
+    if (!hasPermission('CREATE_INVOICE')) {
+      toast({
+        title: language === 'ar' ? 'صلاحية مرفوضة' : 'Permission Denied',
+        description: language === 'ar' ? 'لا تمتلك صلاحية إنشاء فاتورة' : 'You do not have permission to create an invoice',
+        variant: 'destructive',
+      });
+      return;
+    }
 
     if (!appointment) {
       console.error('MarkAttendedDialog: No appointment selected');
@@ -309,7 +317,7 @@ export const MarkAttendedDialog: React.FC<MarkAttendedDialogProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="sm:max-w-[500px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className={cn("flex items-center gap-2", isRTL && "flex-row-reverse")}>
             <CheckCircle className="w-5 h-5 text-success" />

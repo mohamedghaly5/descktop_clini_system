@@ -3,6 +3,7 @@ import { getDb, isSystemReadOnly } from '../db/init.js';
 import { getCurrentClinicId } from '../db/getCurrentClinicId.js';
 import { randomUUID } from 'crypto';
 import { licenseService } from '../license/license.service.js';
+import { verifyPermission } from '../utils/permissions.js';
 
 const checkReadOnly = () => {
     if (isSystemReadOnly()) {
@@ -47,6 +48,7 @@ export function registerLabHandlers() {
 
     ipcMain.handle('lab:create-lab', (_, { name, is_default }) => {
         checkReadOnly();
+        verifyPermission('CLINIC_SETTINGS');
         const clinicId = getCurrentClinicId();
         const id = randomUUID();
 
@@ -74,6 +76,7 @@ export function registerLabHandlers() {
 
     ipcMain.handle('lab:delete-lab', (_, labId) => {
         checkReadOnly();
+        verifyPermission('CLINIC_SETTINGS');
         const clinicId = getCurrentClinicId();
 
         try {
@@ -139,6 +142,7 @@ export function registerLabHandlers() {
 
     ipcMain.handle('lab:create-service', (_, { name, default_cost, is_active, lab_id }) => {
         checkReadOnly();
+        verifyPermission('CLINIC_SETTINGS');
         const clinicId = getCurrentClinicId();
         const id = randomUUID();
         try {
@@ -155,6 +159,7 @@ export function registerLabHandlers() {
 
     ipcMain.handle('lab:update-service', (_, { id, name, default_cost, is_active }) => {
         checkReadOnly();
+        verifyPermission('CLINIC_SETTINGS');
         try {
             getDb().prepare(`
                 UPDATE lab_services

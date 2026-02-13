@@ -55,7 +55,7 @@ const getAppointmentPatientName = (appointment: Appointment, patientsCache: Map<
 
 const AppointmentsPage: React.FC = () => {
   const { t, isRTL, language } = useLanguage();
-  const { user } = useAuth();
+  const { user, hasPermission } = useAuth();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [patientsCache, setPatientsCache] = useState<Map<string, Patient | null>>(new Map());
   const [bookDialogOpen, setBookDialogOpen] = useState(false);
@@ -224,17 +224,31 @@ const AppointmentsPage: React.FC = () => {
   const renderAppointmentCard = (appointment: Appointment, index: number) => (
     <div
       key={appointment.id}
-      className="flex items-center gap-4 p-4 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors animate-fade-in opacity-0"
+      className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 p-4 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors animate-fade-in opacity-0"
       style={{ animationDelay: `${index * 50}ms` }}
     >
-      {/* Time - Start side (right in RTL, left in LTR) */}
-      <div className="flex items-center gap-2 min-w-[80px]">
+      {/* Mobile Top Row: Time + Status */}
+      <div className="flex sm:hidden items-center justify-between w-full pb-2 border-b border-border/10">
+        <div className="flex items-center gap-2">
+          <Clock className="w-4 h-4 text-muted-foreground" />
+          <span className="font-mono font-medium">{appointment.time}</span>
+        </div>
+        <Badge
+          variant="outline"
+          className={cn(statusConfig[appointment.status].className, "shrink-0")}
+        >
+          {statusConfig[appointment.status].label}
+        </Badge>
+      </div>
+
+      {/* Desktop Time */}
+      <div className="hidden sm:flex items-center gap-2 min-w-[80px]">
         <Clock className="w-4 h-4 text-muted-foreground" />
         <span className="font-mono font-medium">{appointment.time}</span>
       </div>
 
       {/* Patient Info - Center */}
-      <div className="flex items-center gap-3 flex-1">
+      <div className="flex items-center gap-3 flex-1 w-full sm:w-auto">
         <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
           <User className="w-5 h-5 text-primary" />
         </div>
@@ -248,23 +262,24 @@ const AppointmentsPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Status Badge */}
+      {/* Desktop Status Badge */}
       <Badge
         variant="outline"
-        className={cn(statusConfig[appointment.status].className, "shrink-0")}
+        className={cn(statusConfig[appointment.status].className, "shrink-0 hidden sm:flex")}
       >
         {statusConfig[appointment.status].label}
       </Badge>
 
       {/* Actions - End side (left in RTL, right in LTR) */}
-      <div className="flex items-center gap-2 shrink-0">
+      <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto justify-end pt-2 sm:pt-0">
         {appointment.status !== 'cancelled' && appointment.status !== 'attended' && (
           <>
             <Select
               value={appointment.status}
               onValueChange={(value) => handleStatusChange(appointment.id, value)}
+              disabled={!hasPermission('EDIT_APPOINTMENT')}
             >
-              <SelectTrigger className="w-[130px]">
+              <SelectTrigger className="flex-1 sm:flex-none sm:w-[130px] h-9">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -287,14 +302,16 @@ const AppointmentsPage: React.FC = () => {
               variant="outline"
               size="icon"
               onClick={() => handleCancelAppointment(appointment.id)}
-              className="text-destructive hover:bg-destructive/10"
+              className="text-destructive hover:bg-destructive/10 h-9 w-9"
+              disabled={!hasPermission('EDIT_APPOINTMENT')}
+              title={!hasPermission('EDIT_APPOINTMENT') ? (language === 'ar' ? 'ليس لديك صلاحية' : 'No Permission') : ''}
             >
               <XCircle className="w-4 h-4" />
             </Button>
           </>
         )}
 
-        {/* WhatsApp Confirmation Button - only show if patient has phone */}
+        {/* WhatsApp Confirmation Button */}
         {getPatientPhone(appointment.patientId) && (
           <TooltipProvider>
             <Tooltip>
@@ -303,7 +320,7 @@ const AppointmentsPage: React.FC = () => {
                   variant="ghost"
                   size="icon"
                   onClick={() => handleWhatsAppConfirmation(appointment)}
-                  className="text-green-600 hover:bg-green-50 hover:text-green-700 dark:hover:bg-green-950"
+                  className="text-green-600 hover:bg-green-50 hover:text-green-700 dark:hover:bg-green-950 h-9 w-9"
                 >
                   <MessageCircle className="w-4 h-4" />
                 </Button>
@@ -315,12 +332,14 @@ const AppointmentsPage: React.FC = () => {
           </TooltipProvider>
         )}
 
-        {/* Delete Button - available for all appointments */}
+        {/* Delete Button */}
         <Button
           variant="ghost"
           size="icon"
           onClick={() => handleDeleteClick(appointment)}
-          className="text-destructive hover:bg-destructive/10"
+          className="text-destructive hover:bg-destructive/10 h-9 w-9"
+          disabled={!hasPermission('DELETE_APPOINTMENT')}
+          title={!hasPermission('DELETE_APPOINTMENT') ? (language === 'ar' ? 'ليس لديك صلاحية' : 'No Permission') : ''}
         >
           <Trash2 className="w-4 h-4" />
         </Button>
@@ -336,7 +355,13 @@ const AppointmentsPage: React.FC = () => {
           <h1 className="text-2xl font-bold text-foreground">{t('appointments')}</h1>
           <p className="text-muted-foreground">{todayDate}</p>
         </div>
-        <Button variant="gradient" onClick={() => setBookDialogOpen(true)} className="flex items-center gap-2">
+        <Button
+          variant="gradient"
+          onClick={() => setBookDialogOpen(true)}
+          className="flex items-center gap-2"
+          disabled={!useAuth().hasPermission('ADD_APPOINTMENT')}
+          title={!useAuth().hasPermission('ADD_APPOINTMENT') ? (language === 'ar' ? 'ليس لديك صلاحية' : 'No Permission') : ''}
+        >
           <Plus className="w-4 h-4" />
           {t('newAppointment')}
         </Button>

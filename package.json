@@ -1,13 +1,19 @@
 {
   "name": "dental-flow",
   "productName": "Dental Flow",
-  "version": "1.0.1",
+  "version": "1.0.6",
   "description": "نظام إدارة عيادة الأسنان",
+  "author": {
+    "name": "Mohamed Ghaly",
+    "email": "mohamedghaly5@github.com"
+  },
   "private": true,
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
-    "dev": "concurrently \"vite\" \"wait-on tcp:8080 && tsc -b electron && tsc -p electron/tsconfig.preload.json && electron .\"",
+    "dev": "concurrently \"vite --host\" \"wait-on tcp:8080 && tsc -b electron && tsc -p electron/tsconfig.preload.json && electron .\"",
+    "start": "concurrently \"vite preview --port 8080\" \"wait-on tcp:8080 && tsc -b electron && tsc -p electron/tsconfig.preload.json && electron .\"",
+    "start-client": "tsc -b electron && electron . --user-data-dir=./client-data",
     "build": "tsc -b electron && tsc -p electron/tsconfig.preload.json && vite build && electron-builder",
     "deploy": "electron-builder --win --publish always",
     "preview": "vite preview"
@@ -33,6 +39,9 @@
       "target": "nsis",
       "icon": "public/icon.ico"
     },
+    "nsis": {
+      "include": "build/installer.nsh"
+    },
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
@@ -47,6 +56,9 @@
     "extends": null
   },
   "dependencies": {
+    "@capacitor/android": "^8.0.2",
+    "@capacitor/cli": "^8.0.2",
+    "@capacitor/core": "^8.0.2",
     "@hookform/resolvers": "^3.10.0",
     "@radix-ui/react-accordion": "^1.2.11",
     "@radix-ui/react-alert-dialog": "^1.1.14",
@@ -78,16 +90,21 @@
     "@supabase/supabase-js": "^2.89.0",
     "@tanstack/react-query": "^5.83.0",
     "adm-zip": "^0.5.16",
+    "axios": "^1.13.2",
     "better-sqlite3": "^12.5.0",
+    "body-parser": "^2.2.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
+    "cors": "^2.8.5",
     "date-fns": "^3.6.0",
     "dotenv": "^17.2.3",
     "electron-store": "^11.0.2",
     "electron-updater": "^6.6.2",
     "embla-carousel-react": "^8.6.0",
+    "express": "^5.2.1",
     "googleapis": "^169.0.0",
+    "html2pdf.js": "^0.14.0",
     "input-otp": "^1.4.2",
     "jspdf": "^3.0.4",
     "jspdf-autotable": "^5.0.2",
@@ -109,10 +126,14 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
     "@eslint/js": "^9.32.0",
     "@tailwindcss/typography": "^0.5.16",
     "@types/adm-zip": "^0.5.7",
     "@types/better-sqlite3": "^7.6.13",
+    "@types/body-parser": "^1.19.6",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
     "@types/node": "^22.19.3",
     "@types/react": "^18.3.23",
     "@types/react-dom": "^18.3.7",
@@ -128,7 +149,9 @@
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^15.15.0",
     "lovable-tagger": "^1.1.13",
+    "png-to-ico": "^3.0.1",
     "postcss": "^8.5.6",
+    "sharp": "^0.34.5",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.38.0",

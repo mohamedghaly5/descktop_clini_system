@@ -4,43 +4,57 @@ import { UserPlus, CalendarPlus, FileText, Plus } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface DashboardQuickActionsProps {
   onNewAppointment: () => void;
+  onOpenDailyReport: () => void;
 }
 
 const DashboardQuickActions: React.FC<DashboardQuickActionsProps> = ({
   onNewAppointment,
+  onOpenDailyReport,
 }) => {
   const { language } = useLanguage();
+  const { hasPermission } = useAuth();
   const navigate = useNavigate();
+  const actions: any[] = [];
 
-  const actions = [
-    {
+  if (hasPermission('ADD_APPOINTMENT')) {
+    actions.push({
       icon: CalendarPlus,
       label: language === 'ar' ? 'موعد جديد' : 'New Appointment',
       variant: 'gradient' as const,
       onClick: onNewAppointment
-    },
-    {
+    });
+  }
+
+  if (hasPermission('ADD_PATIENT')) {
+    actions.push({
       icon: UserPlus,
       label: language === 'ar' ? 'مريض جديد' : 'New Patient',
       variant: 'gradientAccent' as const,
       onClick: () => navigate('/patients/new')
-    },
-    {
+    });
+  }
+
+  if (hasPermission('VIEW_FINANCIAL_REPORTS')) {
+    actions.push({
       icon: FileText,
       label: language === 'ar' ? 'تقرير اليوم' : 'Daily Report',
       variant: 'secondary' as const,
-      onClick: () => navigate('/reports')
-    },
-    {
+      onClick: onOpenDailyReport
+    });
+  }
+
+  if (hasPermission('VIEW_EXPENSES')) {
+    actions.push({
       icon: Plus,
       label: language === 'ar' ? 'إضافة مصروف' : 'Add Expense',
       variant: 'secondary' as const,
       onClick: () => navigate('/expenses?action=add')
-    },
-  ];
+    });
+  }
 
   return (
     <Card variant="elevated" className="animate-fade-in opacity-0 delay-300" style={{ animationDelay: '300ms' }}>

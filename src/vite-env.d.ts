@@ -19,4 +19,13 @@ interface Window {
             removeListener(channel: string, func: (...args: any[]) => void): void;
         };
     };
+    api: {
+        changePin: (oldPin: string, newPin: string) => Promise<any>;
+        createInitialAdmin: (data: any) => Promise<any>;
+        logout: () => Promise<void>;
+        getPatients: (email?: string | null) => Promise<any>;
+        getPatientById: (id: string) => Promise<any>;
+        // Allow other dynamic keys
+        [key: string]: any;
+    };
 }

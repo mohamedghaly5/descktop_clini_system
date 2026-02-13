@@ -43,14 +43,23 @@
 *   **تتبع الحالة**: مراقبة حالة الطلب (مرسل → مستلم).
 *   **الماليات**: تسجيل تكاليف المعمل وإدارة الدفعات المستحقة.
 
-### 5. ☁️ Secure Backup (النسخ الاحتياطي)
+### 5. 📦 Stock Management (إدارة المخزن)
+*   **Inventory Tracking**: Monitor stock levels for medical supplies and items.
+*   **Low Stock Alerts**: Visual indicators when items fall below minimum quantity.
+*   **Movement History**: Track additions and deductions with reasons for every change.
+*   **تتبع المخزون**: مراقبة مستويات المخزون للمستلزمات الطبية.
+*   **تنبيهات النقص**: مؤشرات بصرية عند انخفاض الكميات عن الحد الأدنى.
+*   **سجل الحركات**: تتبع الإضافات والخصومات مع ذكر الأسباب لكل عملية.
+
+
+### 6. ☁️ Secure Backup (النسخ الاحتياطي)
 *   **Hybrid Strategy**: Supports both **Local** and **Cloud (Google Drive)** backups.
 *   **Encryption**: Optional AES-256 encryption for backups.
 *   **Single-File Restore**: Simplified recovery process with integrity checks.
 *   **نظام هجين**: يدعم النسخ المحلي والسحابي (Google Drive).
 *   **التشفير**: خيار تشفير النسخ الاحتياطية لضمان الخصوصية.
 
-### 6. 🔐 Security & Access Control (الأمان والتحكم)
+### 7. 🔐 Security & Access Control (الأمان والتحكم)
 *   **PIN Login**: Fast, secure access for daily use.
 *   **User Management**: Admin can manage users, roles, and reset PINs.
 *   **Change PIN**: Users can securely change their own PINs.

@@ -26,30 +26,17 @@ const ReceiveOrderDialog: React.FC<ReceiveOrderDialogProps> = ({ open, onOpenCha
     const { t, isRTL, language } = useLanguage();
     const { formatCurrency } = useSettings();
     const [loading, setLoading] = useState(false);
-    const [paidAmount, setPaidAmount] = useState<string | number>('');
+    // const [paidAmount, setPaidAmount] = useState<string | number>(''); // Removed
 
     // Reset form when dialog opens with a new order
-    useEffect(() => {
-        if (open && order) {
-            setPaidAmount(''); // Start empty
-        }
-    }, [open, order]);
+    // useEffect(() => { ... }) // Removed
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!order) return;
 
-        const amountToPay = typeof paidAmount === 'string' && paidAmount === '' ? 0 : Number(paidAmount);
-
-        if (amountToPay < 0) {
-            toast.error(language === 'ar' ? 'المبلغ المدفوع يجب أن يكون صفر أو أكثر' : 'Paid amount must be 0 or more');
-            return;
-        }
-
-        if (amountToPay > order.remaining_balance + 0.1) { // small buffer for float
-            toast.error(language === 'ar' ? 'المبلغ المدفوع أكبر من المبلغ المتبقي' : 'Paid amount exceeds remaining balance');
-            return;
-        }
+        // amountToPay is always 0 for just status update
+        const amountToPay = 0;
 
         setLoading(true);
         try {
@@ -60,7 +47,7 @@ const ReceiveOrderDialog: React.FC<ReceiveOrderDialogProps> = ({ open, onOpenCha
             });
 
             if (result.success) {
-                toast.success(language === 'ar' ? 'تم استلام الطلب وتسجيل الدفع بنجاح' : 'Order received and payment recorded');
+                toast.success(language === 'ar' ? 'تم استلام الطلب بنجاح' : 'Order marked as received');
                 onSuccess();
                 onOpenChange(false);
             } else {
@@ -83,8 +70,8 @@ const ReceiveOrderDialog: React.FC<ReceiveOrderDialogProps> = ({ open, onOpenCha
                     <DialogTitle>{language === 'ar' ? 'تأكيد استلام الطلب' : 'Confirm Order Receipt'}</DialogTitle>
                     <DialogDescription>
                         {language === 'ar'
-                            ? 'يرجى تأكيد استلام العمل من المعمل وتسجيل أي مبالغ مدفوعة.'
-                            : 'Please confirm receiving the work from the lab and record any payment made.'}
+                            ? 'يرجى تأكيد استلام العمل من المعمل. سيتم تغيير حالة الطلب إلى "مستلم".'
+                            : 'Please confirm receiving the work. Order status will be updated to "Received".'}
                     </DialogDescription>
                 </DialogHeader>
 
@@ -97,7 +84,7 @@ const ReceiveOrderDialog: React.FC<ReceiveOrderDialogProps> = ({ open, onOpenCha
                         </div>
                         <div>
                             <span className="text-muted-foreground block">{language === 'ar' ? 'المعمل' : 'Lab'}</span>
-                            <span className="font-semibold">{language === 'ar' ? 'الافتراضي' : 'Default'}</span>
+                            <span className="font-semibold">{order.lab_name || (language === 'ar' ? 'غير محدد' : 'Unknown')}</span>
                         </div>
                         <div>
                             <span className="text-muted-foreground block">{t('lab.dialog.cost')}</span>
@@ -109,24 +96,8 @@ const ReceiveOrderDialog: React.FC<ReceiveOrderDialogProps> = ({ open, onOpenCha
                         </div>
                     </div>
 
-                    {/* Payment Input */}
-                    <div className="space-y-2">
-                        <Label>{language === 'ar' ? 'المبلغ المدفوع الآن' : 'Amount Paid Now'}</Label>
-                        <Input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            max={order.remaining_balance}
-                            placeholder={language === 'ar' ? `المتبقي: ${order.remaining_balance}` : `Remaining: ${order.remaining_balance}`}
-                            value={paidAmount}
-                            onChange={(e) => setPaidAmount(e.target.value)}
-                            className="font-bold text-lg"
-                        />
-                        <p className="text-xs text-muted-foreground">
-                            {language === 'ar'
-                                ? `سيتم تسجيل مصروف بقيمة ${formatCurrency(Number(paidAmount || 0), language)}`
-                                : `An expense of ${formatCurrency(Number(paidAmount || 0), language)} will be recorded`}
-                        </p>
+                    <div className="bg-yellow-50 p-3 rounded text-sm text-yellow-800 border border-yellow-200">
+                        {language === 'ar' ? 'ملاحظة: لتسجيل دفعة مالية، يرجى استخدام زر "تسجيل دفعة" المنفصل.' : 'Note: To record a payment, please use the separate "Record Payment" button.'}
                     </div>
 
                     <DialogFooter className="mt-4 gap-2">

@@ -35,6 +35,7 @@ contextBridge.exposeInMainWorld('api', {
     getPatientById: (id: string) => ipcRenderer.invoke('patients:getById', id),
     createPatient: (data: any) => ipcRenderer.invoke('patients:create', data),
     importPatients: (buffer: ArrayBuffer, email?: string | null) => ipcRenderer.invoke('patients:import', { buffer, email }),
+    exportVcf: (data: { months: string[] }) => ipcRenderer.invoke('patients:export-vcf', data),
     recalculateTreatmentCases: () => ipcRenderer.invoke('treatment_cases:recalculate'),
 
     // Daily Report

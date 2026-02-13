@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import crypto, { randomUUID } from 'crypto';
 export const up = (db) => {
     console.log('Starting Users & Auth Migration...');
     const transaction = db.transaction(() => {
@@ -25,12 +25,15 @@ export const up = (db) => {
                 console.log('Seeding Admin User from Clinic Owner...');
                 const userId = randomUUID();
                 const ownerName = clinic.owner_name || 'Admin Doctor';
-                // Insert without email
+                // Pre-hash default PIN '0000'
+                const salt = 'dental-flow-local-salt';
+                const defaultPinHash = crypto.scryptSync('0000', salt, 64).toString('hex');
+                // Insert with pin_code
                 db.prepare(`
-                INSERT INTO users (id, clinic_id, name, role, active)
-                VALUES (?, ?, ?, 'admin', 1)
-            `).run(userId, clinic.id, ownerName);
-                console.log(`Created Admin User: ${ownerName}`);
+                INSERT INTO users (id, clinic_id, name, role, active, pin_code)
+                VALUES (?, ?, ?, 'admin', 1, ?)
+            `).run(userId, clinic.id, ownerName, defaultPinHash);
+                console.log(`Created Admin User: ${ownerName} with PIN 0000`);
             }
         }
         else {
