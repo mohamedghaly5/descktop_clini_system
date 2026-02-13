@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   User, Phone, MapPin, Calendar, FileText,
   Edit, Trash2, ArrowLeft, Upload, Image, X,
-  CheckCircle, Clock, DollarSign, Briefcase, MessageCircle, Plus
+  CheckCircle, Clock, DollarSign, Briefcase, MessageCircle, Plus, Camera as CameraIcon
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -62,6 +62,7 @@ import { createTreatmentCase, deleteTreatmentCase } from '@/services/appointment
 import { toast } from '@/hooks/use-toast';
 import { formatDate } from '@/utils/format';
 import { DeletePatientDialog, DeletePatientStats } from '@/components/patients/DeletePatientDialog';
+import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 
 // Helper to get patient name
 const getPatientName = (patient: Patient) => {
@@ -261,6 +262,39 @@ const PatientDetailsPage: React.FC = () => {
       }));
     };
     reader.readAsDataURL(file);
+  };
+
+  const handleCameraCapture = async () => {
+    try {
+      const image = await Camera.getPhoto({
+        quality: 90,
+        allowEditing: false,
+        resultType: CameraResultType.DataUrl,
+        source: CameraSource.Camera
+      });
+
+      if (image.dataUrl) {
+        // Create a unique filename based on timestamp
+        const fileName = `camera_${new Date().getTime()}.${image.format}`;
+
+        setUploadForm(prev => ({
+          ...prev,
+          fileUrl: image.dataUrl!,
+          fileName: fileName,
+          fileType: 'image' // Default to image
+        }));
+      }
+    } catch (error) {
+      console.error('Camera error:', error);
+      // Don't show error if user just cancelled
+      if (typeof error === 'string' && !error.includes('cancelled')) {
+        toast({
+          title: language === 'ar' ? 'خطأ' : 'Error',
+          description: language === 'ar' ? 'فشل فتح الكاميرا' : 'Failed to open camera',
+          variant: 'destructive',
+        });
+      }
+    }
   };
 
   const handleUploadSubmit = async () => {
@@ -840,12 +874,24 @@ const PatientDetailsPage: React.FC = () => {
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="space-y-2">
-              <Label>{language === 'ar' ? 'اختر ملف' : 'Select File'}</Label>
-              <Input
-                type="file"
-                accept="image/*"
-                onChange={handleFileUpload}
-              />
+              <Label>{language === 'ar' ? 'اختر ملف أو التقط صورة' : 'Select File or Take Photo'}</Label>
+              <div className="flex gap-2">
+                <Input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFileUpload}
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={handleCameraCapture}
+                  title={language === 'ar' ? 'التقاط صورة' : 'Take Photo'}
+                >
+                  <CameraIcon className="w-5 h-5" />
+                </Button>
+              </div>
             </div>
             {uploadForm.fileUrl && (
               <div className="rounded-lg overflow-hidden border">
