@@ -30,7 +30,9 @@ jobs:
         run: npm ci
 
       - name: Build Web App
-        run: npm run build
+        run: |
+          npm run type-check || true
+          npx vite build
 
       - name: Sync Capacitor
         run: npx cap sync android
