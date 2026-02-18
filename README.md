@@ -7,3 +7,4 @@ Please navigate to the **[Releases](../../releases)** section to download the la
 
 ## Support
 For technical support, please contact the developer directly.
+Telegram: ghaly_gg
